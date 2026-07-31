@@ -1,0 +1,39 @@
+# Real-path follow-up: the #help-observability PrivateLink allowlist request (PR #337,
+# telemetry-gateway-iac) is merged and applied, and infra/springer-otel-vpc-endpoint.tf
+# is up (vpce-0f015c495a2dea9b9, state=available, real TCP connect to
+# otelgw-gp0.us-east-1.dev.platform.twilioinfra.com:443 confirmed from inside this VPC).
+# So this now tests real delivery, not just the mechanism: does a log line from a
+# short-lived, run-to-completion pod actually land in Springer/ClickHouse, not just get
+# captured locally by the collector? otlp/springer exporter added alongside debug so
+# results are visible both via `kubectl logs` (immediate) and in ClickHouse (real
+# end-to-end proof). Original mechanism-only finding (4/4 captured via debug exporter,
+# no real Springer connectivity) is unchanged and documented below/in README.
+
+mode: daemonset
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+presets:
+  logsCollection:
+    enabled: true
+    includeCollectorLogs: false
+
+config:
+  exporters:
+    debug:
+      verbosity: detailed
+    otlp/springer:
+      endpoint: otelgw-gp0.us-east-1.dev.platform.twilioinfra.com:443
+  service:
+    pipelines:
+      logs:
+        exporters: [debug, otlp/springer]
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi

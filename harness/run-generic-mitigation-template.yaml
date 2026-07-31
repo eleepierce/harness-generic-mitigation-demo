@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "1.0.4"
+  versionLabel: "1.0.8"
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -21,16 +21,18 @@ template:
                     identifier: Run_Mitigation_Container
                     timeout: 5m
                     spec:
-                      connectorRef: harnesspocdockerecr
+                      connectorRef: <+stage.variables.docker_connector>
                       image: <+stage.variables.image>
                       shell: Sh
                       envVariables:
                         TARGET_HOST: <+stage.variables.target_host>
                         TARGET_PORT: <+stage.variables.target_port>
+                        DB_USER: <+stage.variables.db_user>
+                        DB_PASSWORD: <+secrets.getValue(<+stage.variables.db_password_secret>)>
               stepGroupInfra:
                 type: KubernetesDirect
                 spec:
-                  connectorRef: harnesspoceks
+                  connectorRef: <+stage.variables.k8s_connector>
                   namespace: default
     variables:
       - name: image
@@ -46,5 +48,25 @@ template:
       - name: target_port
         type: String
         description: "Target port to test reachability against"
+        required: true
+        value: <+input>
+      - name: docker_connector
+        type: String
+        description: "Identifier of the team's DockerRegistry connector for the mitigation image"
+        required: true
+        value: <+input>
+      - name: k8s_connector
+        type: String
+        description: "Identifier of the team's K8sCluster connector (their delegate/cluster)"
+        required: true
+        value: <+input>
+      - name: db_user
+        type: String
+        description: "DB username. Container runs real SQL (not just a connectivity check) using this and db_password."
+        required: true
+        value: <+input>
+      - name: db_password_secret
+        type: String
+        description: "Identifier of a Harness secret holding the DB password (e.g. 'harnessPocDbPasswordV2'). Passed as a name and resolved directly in this template, not as a Secret-type variable — see architecture note in the repo README about why."
         required: true
         value: <+input>

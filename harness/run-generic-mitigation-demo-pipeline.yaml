@@ -10,7 +10,7 @@ pipeline:
         identifier: mitigation
         template:
           templateRef: rungenericmitigation
-          versionLabel: "1.0.4"
+          versionLabel: "1.0.8"
           templateInputs:
             type: Custom
             variables:
@@ -21,5 +21,17 @@ pipeline:
                 type: String
                 value: <+input>
               - name: target_port
+                type: String
+                value: <+input>
+              - name: docker_connector
+                type: String
+                value: <+input>
+              - name: k8s_connector
+                type: String
+                value: <+input>
+              - name: db_user
+                type: String
+                value: <+input>
+              - name: db_password_secret
                 type: String
                 value: <+input>
