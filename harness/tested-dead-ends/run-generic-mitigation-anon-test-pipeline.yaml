@@ -1,0 +1,25 @@
+pipeline:
+  name: run-generic-mitigation-anon-test
+  identifier: rungenericmitigationanontest
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: mitigation
+        identifier: mitigation
+        template:
+          templateRef: rungenericmitigation
+          versionLabel: "1.0.5"
+          templateInputs:
+            type: Custom
+            variables:
+              - name: image
+                type: String
+                value: <+input>
+              - name: target_host
+                type: String
+                value: <+input>
+              - name: target_port
+                type: String
+                value: <+input>

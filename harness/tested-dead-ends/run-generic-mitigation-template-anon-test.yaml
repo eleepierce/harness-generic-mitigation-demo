@@ -1,0 +1,50 @@
+template:
+  name: run-generic-mitigation
+  identifier: rungenericmitigation
+  versionLabel: "1.0.5"
+  type: Stage
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  spec:
+    type: Custom
+    spec:
+      execution:
+        steps:
+          - stepGroup:
+              name: mitigation
+              identifier: mitigation
+              steps:
+                - step:
+                    type: Run
+                    name: Run Mitigation Container
+                    identifier: Run_Mitigation_Container
+                    timeout: 5m
+                    spec:
+                      connectorRef: harnesspocdockerecranon
+                      image: <+stage.variables.image>
+                      shell: Sh
+                      envVariables:
+                        TARGET_HOST: <+stage.variables.target_host>
+                        TARGET_PORT: <+stage.variables.target_port>
+              stepGroupInfra:
+                type: KubernetesDirect
+                spec:
+                  connectorRef: harnesspoceks
+                  namespace: default
+    variables:
+      - name: image
+        type: String
+        description: "Full image reference for the blessed mitigation container"
+        required: true
+        value: <+input>
+      - name: target_host
+        type: String
+        description: "Target host to test reachability against"
+        required: true
+        value: <+input>
+      - name: target_port
+        type: String
+        description: "Target port to test reachability against"
+        required: true
+        value: <+input>

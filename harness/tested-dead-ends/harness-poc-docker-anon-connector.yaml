@@ -1,0 +1,14 @@
+connector:
+  name: harness-poc-docker-ecr-anon
+  identifier: harnesspocdockerecranon
+  orgIdentifier: cloudnativeplatform
+  projectIdentifier: reliability_engineering
+  type: DockerRegistry
+  spec:
+    dockerRegistryUrl: https://547641909728.dkr.ecr.us-east-1.amazonaws.com
+    providerType: Other
+    auth:
+      type: Anonymous
+    executeOnDelegate: true
+    delegateSelectors:
+      - harness-poc-delegate

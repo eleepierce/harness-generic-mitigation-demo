@@ -155,10 +155,27 @@ this repo but is not the end state.
 
 Trade-off worth knowing: the old `Aws` connector's `InheritFromDelegate` auth needed no
 credential management at all. The new `DockerRegistry` connector's static token
-(`ecrPocToken`) does — it's an ECR login password that expires in ~12 hours. Fine for a
-POC; a real rollout would want either a refreshed/rotated secret or confirmation that
-Harness has a more durable ECR-via-DockerRegistry auth path before relying on this for
-anything long-lived.
+(`ecrPocToken`) does — it's an ECR login password that expires in ~12 hours.
+
+**Tested and ruled out: a credential-free `DockerRegistry` connector does not work,**
+even though the underlying EKS node can already pull the same image via its own IAM
+role. `InheritFromDelegate` isn't a valid auth type for `DockerRegistry` (that concept
+is specific to cloud-provider connectors with an inherent host identity). `Anonymous`
+auth *does* pass connector creation, but fails at actual execution — confirmed via a
+real run (`rungenericmitigationanontest`, template v1.0.5, execution
+`oI3pEaIZRbWXb4jSOChneQ`): the pod scheduled and kubelet's own pull succeeded (image was
+already cached on the node), but Harness's own step-execution runtime (`lite-engine`)
+separately calls the registry's manifest API to resolve the container's entrypoint —
+and that call uses the declared connector's credentials, not the node's ambient IAM
+role. With no real credentials, ECR returns `401 Unauthorized`. So there are two
+genuinely separate pull paths (kubelet's, which can ride node IAM; Harness's own, which
+cannot), and only crediting the one Harness actually controls makes the step work. A
+durable rollout needs the Secrets-Manager-plus-refresher approach — there's no
+zero-credential path available here.
+
+(Test artifacts left in place, clearly labeled: connector `harnesspocdockerecranon`,
+pipeline `rungenericmitigationanontest` on template v1.0.5 — not stable, not part of
+the actual demo, kept only as a record of what was tried.)
 
 ---
 
