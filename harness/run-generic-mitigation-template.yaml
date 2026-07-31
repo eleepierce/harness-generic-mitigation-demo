@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "1.0.3"
+  versionLabel: "1.0.4"
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -21,8 +21,8 @@ template:
                     identifier: Run_Mitigation_Container
                     timeout: 5m
                     spec:
-                      connectorRef: harnesspocaws
-                      image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.0
+                      connectorRef: harnesspocdockerecr
+                      image: <+stage.variables.image>
                       shell: Sh
                       envVariables:
                         TARGET_HOST: <+stage.variables.target_host>
@@ -33,6 +33,11 @@ template:
                   connectorRef: harnesspoceks
                   namespace: default
     variables:
+      - name: image
+        type: String
+        description: "Full image reference for the blessed mitigation container"
+        required: true
+        value: <+input>
       - name: target_host
         type: String
         description: "Target host to test reachability against"

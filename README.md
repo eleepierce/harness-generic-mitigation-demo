@@ -57,9 +57,10 @@ cat container/Dockerfile
 # docker build --platform linux/amd64 -t 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.0 container/
 # docker push 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.0
 
-# THE live demo command — one command, runtime-supplied target:
+# THE live demo command — one command, runtime-supplied image AND target:
 harness execute pipeline rungenericmitigationdemo \
   --org cloudnativeplatform --project reliability_engineering \
+  --input image=547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.0 \
   --input target_host=harness-poc-connectivity-test.cluster-cc7gy6moir8k.us-east-1.rds.amazonaws.com \
   --input target_port=3306 \
   --follow
@@ -76,13 +77,14 @@ unreachable target to show the failure path is real too:
 ```bash
 harness execute pipeline rungenericmitigationdemo \
   --org cloudnativeplatform --project reliability_engineering \
+  --input image=547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.0 \
   --input target_host=example.com \
   --input target_port=9999 \
   --follow
 # Expect: Status Failed, log shows "UNREACHABLE: could not open TCP connection to example.com:9999"
 ```
 
-Known-good sample output from a real run (execution `rBeyDbACR2eT89VF-Xn6VA`):
+Known-good sample output from a real run (execution `1ePU-unAS5mUyjP3ga4MpQ`):
 
 ```
 Status:       Success
@@ -108,8 +110,10 @@ REACHABLE: successfully opened TCP connection to harness-poc-connectivity-test.c
 |---|---|---|
 | Delegate | `harness-poc-delegate` | Helm-installed, running in EKS cluster `harness-poc` |
 | Connector (K8sCluster) | `harnesspoceks` | `InheritFromDelegate` — no separate cluster credentials |
-| Connector (Aws) | `harnesspocaws` | `InheritFromDelegate` — used for ECR image pull auth |
-| Template (Stage) | `rungenericmitigation` | v1.0.3 marked stable — `harness/run-generic-mitigation-template.yaml` |
+| Connector (DockerRegistry) | `harnesspocdockerecr` | Used for ECR image pull auth in the current (v1.0.4+) template — see architecture note below |
+| Connector (Aws) | `harnesspocaws` | Superseded — was used for image pull in template v1.0.0–1.0.3, replaced because it forced the image to be hardcoded (see note) |
+| Secret | `ecrPocToken` | Static ECR login password backing `harnesspocdockerecr` — expires ~12h, needs manual refresh (POC-only, see caveat) |
+| Template (Stage) | `rungenericmitigation` | v1.0.4 marked stable — `harness/run-generic-mitigation-template.yaml` |
 | Pipeline | `rungenericmitigationdemo` | The container+template demo — `harness/run-generic-mitigation-demo-pipeline.yaml` |
 | Pipeline | `harnesspocvpcconnectivitytest` | Earlier, simpler proof (inline shell, no container) that first confirmed private-VPC DB reachability |
 
@@ -126,6 +130,35 @@ REACHABLE: successfully opened TCP connection to harness-poc-connectivity-test.c
 - `container/check.sh`, `container/Dockerfile` — the mitigation script itself
 - `harness/*.yaml` — template, pipeline, and connector definitions, as actually applied
 - `infra/aurora-test-target.tf` — the standalone Aurora Terraform (local state only)
+
+---
+
+## Architecture note: this is now a genuinely reusable template
+
+Earlier in this repo's history, the mitigation image had to be hardcoded directly into
+the template rather than passed as a runtime input, because Harness's `Aws`-type
+connector validates the image string against ECR's URL format *before* resolving
+`<+variable>` expressions — a templated image field got rejected outright. That meant,
+as first built, a second mitigation would have needed its own copy of the template with
+a different image baked in, which is NOT the architecture this is supposed to
+demonstrate.
+
+**Fixed, verified:** switching the image-pull connector to a plain `DockerRegistry` type
+(`harnesspocdockerecr`, pointed at the same ECR registry, auth via a stored token
+instead of `InheritFromDelegate`) avoids that early validation entirely. `image` is now
+a genuine template variable exactly like `target_host`/`target_port` — confirmed with a
+real run (execution `1ePU-unAS5mUyjP3ga4MpQ`, `Status: Success`, pulled the image via
+the new connector). This means the actual, current adoption model is: **a team writes
+their script/Dockerfile and a thin pipeline; the template is shared and built once** —
+not "every mitigation needs its own template," which was true of earlier versions of
+this repo but is not the end state.
+
+Trade-off worth knowing: the old `Aws` connector's `InheritFromDelegate` auth needed no
+credential management at all. The new `DockerRegistry` connector's static token
+(`ecrPocToken`) does — it's an ECR login password that expires in ~12 hours. Fine for a
+POC; a real rollout would want either a refreshed/rotated secret or confirmation that
+Harness has a more durable ECR-via-DockerRegistry auth path before relying on this for
+anything long-lived.
 
 ---
 

@@ -10,10 +10,13 @@ pipeline:
         identifier: mitigation
         template:
           templateRef: rungenericmitigation
-          versionLabel: "1.0.3"
+          versionLabel: "1.0.4"
           templateInputs:
             type: Custom
             variables:
+              - name: image
+                type: String
+                value: <+input>
               - name: target_host
                 type: String
                 value: <+input>
