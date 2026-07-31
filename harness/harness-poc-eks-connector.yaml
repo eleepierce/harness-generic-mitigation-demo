@@ -1,0 +1,11 @@
+connector:
+  name: harness-poc-eks
+  identifier: harnesspoceks
+  orgIdentifier: cloudnativeplatform
+  projectIdentifier: reliability_engineering
+  type: K8sCluster
+  spec:
+    credential:
+      type: InheritFromDelegate
+    delegateSelectors:
+      - harness-poc-delegate

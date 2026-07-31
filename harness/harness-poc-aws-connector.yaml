@@ -1,0 +1,13 @@
+connector:
+  name: harness-poc-aws
+  identifier: harnesspocaws
+  orgIdentifier: cloudnativeplatform
+  projectIdentifier: reliability_engineering
+  type: Aws
+  spec:
+    credential:
+      type: InheritFromDelegate
+    delegateSelectors:
+      - harness-poc-delegate
+    executeOnDelegate: true
+    ignoreTestConnection: true
