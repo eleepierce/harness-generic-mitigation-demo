@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 }
 
@@ -69,17 +73,17 @@ resource "aws_security_group" "connectivity_test_db" {
 }
 
 resource "aws_rds_cluster" "connectivity_test" {
-  cluster_identifier           = local.cluster_name
-  engine                       = "aurora-mysql"
-  engine_version               = "8.0.mysql_aurora.3.10.3"
-  database_name                = "connectivitytest"
-  master_username              = "admin"
-  manage_master_user_password  = true
-  db_subnet_group_name         = aws_db_subnet_group.connectivity_test.name
-  vpc_security_group_ids       = [aws_security_group.connectivity_test_db.id]
-  storage_encrypted            = true
-  skip_final_snapshot          = true
-  apply_immediately            = true
+  cluster_identifier          = local.cluster_name
+  engine                      = "aurora-mysql"
+  engine_version              = "8.0.mysql_aurora.3.10.3"
+  database_name               = "connectivitytest"
+  master_username             = "admin"
+  manage_master_user_password = true
+  db_subnet_group_name        = aws_db_subnet_group.connectivity_test.name
+  vpc_security_group_ids      = [aws_security_group.connectivity_test_db.id]
+  storage_encrypted           = true
+  skip_final_snapshot         = true
+  apply_immediately           = true
 
   tags = {
     env     = "poc"

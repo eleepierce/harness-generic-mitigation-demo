@@ -11,7 +11,7 @@ connector:
       type: UsernamePassword
       spec:
         username: AWS
-        passwordRef: ecrPocToken
+        passwordRef: ecrTokenFromSecretsManager
     executeOnDelegate: true
     delegateSelectors:
       - harness-poc-delegate

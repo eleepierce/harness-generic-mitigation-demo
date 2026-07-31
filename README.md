@@ -84,7 +84,8 @@ harness execute pipeline rungenericmitigationdemo \
 # Expect: Status Failed, log shows "UNREACHABLE: could not open TCP connection to example.com:9999"
 ```
 
-Known-good sample output from a real run (execution `1ePU-unAS5mUyjP3ga4MpQ`):
+Known-good sample output from a real run (execution `PfP7pjTIQjSj7XOQVq-uFw`, using the
+final durable-auth setup):
 
 ```
 Status:       Success
@@ -111,8 +112,9 @@ REACHABLE: successfully opened TCP connection to harness-poc-connectivity-test.c
 | Delegate | `harness-poc-delegate` | Helm-installed, running in EKS cluster `harness-poc` |
 | Connector (K8sCluster) | `harnesspoceks` | `InheritFromDelegate` — no separate cluster credentials |
 | Connector (DockerRegistry) | `harnesspocdockerecr` | Used for ECR image pull auth in the current (v1.0.4+) template — see architecture note below |
+| Connector (AwsSecretManager) | `harnesspocawssecretsmanager` | Reads the auto-refreshed ECR password from AWS Secrets Manager, auth via `AssumeIAMRole` (the delegate's own node IAM role — no stored credential) |
+| Secret (Reference) | `ecrTokenFromSecretsManager` | Points `harnesspocdockerecr`'s `passwordRef` at the AWS-managed secret — durable, no manual refresh needed. Created via direct API call, not the CLI (see caveat) |
 | Connector (Aws) | `harnesspocaws` | Superseded — was used for image pull in template v1.0.0–1.0.3, replaced because it forced the image to be hardcoded (see note) |
-| Secret | `ecrPocToken` | Static ECR login password backing `harnesspocdockerecr` — expires ~12h, needs manual refresh (POC-only, see caveat) |
 | Template (Stage) | `rungenericmitigation` | v1.0.4 marked stable — `harness/run-generic-mitigation-template.yaml` |
 | Pipeline | `rungenericmitigationdemo` | The container+template demo — `harness/run-generic-mitigation-demo-pipeline.yaml` |
 | Pipeline | `harnesspocvpcconnectivitytest` | Earlier, simpler proof (inline shell, no container) that first confirmed private-VPC DB reachability |
@@ -124,12 +126,18 @@ REACHABLE: successfully opened TCP connection to harness-poc-connectivity-test.c
 | EKS cluster | `harness-poc` | Created via eksctl, `harness-db-devop-poc/infra/eks-cluster.yaml` |
 | Aurora MySQL cluster | `harness-poc-connectivity-test` | `infra/aurora-test-target.tf` — hand-written, deliberately NOT using the `terraform-twilio-aws-aurora` module (it requires a live Datadog API key + PagerDuty service with no opt-out) |
 | ECR repo + image | `harness-poc/connectivity-check:v1.0.0` | The blessed mitigation container |
+| Secrets Manager secret | `harness-poc/ecr-docker-password` | Auto-refreshed ECR login password — `infra/ecr-token-refresher.tf` |
+| Lambda | `harness-poc-ecr-token-refresher` | Calls `ecr:GetAuthorizationToken` and writes the result to the secret above — `infra/lambda-src/ecr_token_refresher.py` |
+| EventBridge rule | `harness-poc-ecr-token-refresh` | Triggers the Lambda every 6h, well inside the token's ~12h expiry |
+| IAM role | `harness-poc-ecr-token-refresher` | The Lambda's execution role — also needs real `ecr:BatchGetImage`/`GetDownloadUrlForLayer`/`BatchCheckLayerAvailability` on the repo (see architecture note — ECR tokens are principal-scoped to whoever minted them, not just whoever uses them) |
+| IAM inline policy | `harness-poc-ecr-secret-read` on the EKS node role | Scoped `secretsmanager:GetSecretValue`/`DescribeSecret` on both the real secret and Harness's own `*aws_secrets_manager_validation*` self-test pattern |
 
 **This repo:**
 
 - `container/check.sh`, `container/Dockerfile` — the mitigation script itself
 - `harness/*.yaml` — template, pipeline, and connector definitions, as actually applied
 - `infra/aurora-test-target.tf` — the standalone Aurora Terraform (local state only)
+- `infra/ecr-token-refresher.tf`, `infra/lambda-src/` — the durable registry-auth refresher
 
 ---
 
@@ -153,10 +161,6 @@ their script/Dockerfile and a thin pipeline; the template is shared and built on
 not "every mitigation needs its own template," which was true of earlier versions of
 this repo but is not the end state.
 
-Trade-off worth knowing: the old `Aws` connector's `InheritFromDelegate` auth needed no
-credential management at all. The new `DockerRegistry` connector's static token
-(`ecrPocToken`) does — it's an ECR login password that expires in ~12 hours.
-
 **Tested and ruled out: a credential-free `DockerRegistry` connector does not work,**
 even though the underlying EKS node can already pull the same image via its own IAM
 role. `InheritFromDelegate` isn't a valid auth type for `DockerRegistry` (that concept
@@ -176,6 +180,52 @@ zero-credential path available here.
 (Test artifacts left in place, clearly labeled: connector `harnesspocdockerecranon`,
 pipeline `rungenericmitigationanontest` on template v1.0.5 — not stable, not part of
 the actual demo, kept only as a record of what was tried.)
+
+## Architecture note: registry auth is now durable, not just working
+
+The static `ecrPocToken` secret from the section above is gone — replaced with a fully
+auto-refreshing chain, no manual token rotation anywhere:
+
+1. **`infra/ecr-token-refresher.tf`** provisions a Secrets Manager secret
+   (`harness-poc/ecr-docker-password`), a Lambda (`harness-poc-ecr-token-refresher`) that
+   calls `ecr:GetAuthorizationToken` and writes the result to that secret, and an
+   EventBridge rule firing the Lambda every 6h — safely inside the token's ~12h expiry.
+2. **`harnesspocawssecretsmanager`** (an `AwsSecretManager`-type connector) reads that
+   secret at execution time, authenticating via `AssumeIAMRole` — the delegate's own
+   node IAM role, no stored credential on the Harness side at all.
+3. **`ecrTokenFromSecretsManager`** (a `Reference`-type Harness secret, not `Inline`)
+   points at that AWS secret by name. `harnesspocdockerecr`'s `passwordRef` now points at
+   *this*, not a static value.
+
+Verified end to end with a real run (execution `PfP7pjTIQjSj7XOQVq-uFw`, `Status:
+Success`) — the pod pulled the image using the Secrets-Manager-backed password and hit
+`REACHABLE`, exactly like every prior successful run, just with nothing to rotate by
+hand.
+
+**Three real gotchas hit and fixed while building this, worth knowing if extending it:**
+
+- **ECR authorization tokens are principal-scoped.** Whoever calls
+  `GetAuthorizationToken` is who the resulting password authenticates as on the *actual*
+  pull — not whoever later uses the password. The Lambda mints the token, so the
+  Lambda's own IAM role needs real `ecr:BatchGetImage`/`GetDownloadUrlForLayer`/
+  `BatchCheckLayerAvailability` on the repo — granting only `GetAuthorizationToken` looks
+  sufficient (the token mints fine) but fails later with a `BatchGetImage` denial that's
+  easy to misread as a Harness-side problem.
+- **Harness's `AwsSecretManager` connector-level "test" doesn't check your actual
+  secret** — it creates a synthetic validation secret with an unpredictable name
+  (`harness/aws_secrets_manager_validation<random>` in one attempt, `null/...` in
+  another, depending on whether `secretNamePrefix` is set) purely to verify the
+  credential mechanism generically. The node/delegate IAM role needs read access to that
+  pattern too, not just your real secret — matched here with a
+  `*aws_secrets_manager_validation*` wildcard rather than chasing the exact prefix.
+- **The `harness` CLI's `create secret -f file.yaml` silently drops custom `spec`
+  fields** for this scenario — tried both wrapped (`secret: {...}`) and flat YAML,
+  schema confirmed correct against Harness's own Terraform provider source twice, both
+  times it created a plain `Inline`/`harnessSecretManager` secret regardless of what the
+  file actually said. The fix was going around the CLI entirely: a direct
+  `POST /ng/api/v2/secrets` call with the same JSON body worked on the first try. If a
+  future secret needs `valueType: Reference`, use the API directly, not `harness create
+  secret -f`.
 
 ---
 
@@ -210,3 +260,12 @@ the actual demo, kept only as a record of what was tried.)
   eksctl + Helm, token regeneration) — exactly the kind of friction Robert wants
   Backstage templates to eliminate before wider rollout. Worth naming directly if asked
   "how hard is this to set up."
+- **`kubectl get pods -n harness-delegate-ng` may show a second pod stuck in
+  `ImagePullBackOff`, recurring roughly hourly.** The account-level "latest delegate"
+  version is pinned to the internal GAR-mirrored image
+  (`us-west1-docker.pkg.dev/gar-setup/...`), and the delegate's `upgrader` CronJob tries
+  to auto-upgrade to it every hour regardless of what this cluster can actually reach —
+  same 403 as the original delegate install (this cluster isn't OTK-onboarded). Harmless
+  — the original pod keeps serving throughout — but delete the stray pod
+  (`kubectl delete pod <name> -n harness-delegate-ng`) before a demo so it doesn't raise
+  questions if someone checks pod status live.
