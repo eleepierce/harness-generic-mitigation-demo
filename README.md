@@ -131,6 +131,21 @@ REACHABLE: successfully opened TCP connection to harness-poc-connectivity-test.c
 
 ## Caveats worth knowing before presenting
 
+- **`--follow`'s scrolling text can show a `<<< failed ... "running"` or
+  `"asyncwaiting"` line on a run that succeeds — this is a confirmed cosmetic bug in
+  Harness's own CLI, not a real failure.** Root cause (verified in
+  `harness/cli`'s `pkg/logstream/logstream.go`, `WriteEndEvent`): the switch statement
+  that labels each node's end-of-stream line has no case for legitimate in-progress
+  statuses like `running`/`asyncwaiting`, so they fall into the `default` branch meant
+  for genuine failures, which prints `<<< failed` and — since there's no real failure
+  message — falls back to printing the raw status string as if it were one. Each node's
+  line is only emitted once, from a goroutine that can race ahead of the node's true
+  completion, so a premature mislabel never gets corrected on screen. `--follow` also
+  prints no explicit "done" banner on success, so a run can appear to end abruptly on
+  one of these lines. **The scrolling text is never the ground truth — always confirm
+  with `harness get execution <id>`, which reports the real, correct final status.** If
+  this comes up live, it's a one-line aside: "that's a known cosmetic bug in the CLI's
+  log streamer, not our pipeline."
 - The Aurora cluster's Terraform state is **local only** — not Terraform Cloud, not
   Harness IACM. Matches the "throwaway POC, not load-bearing" framing from the 07-27
   sync; run `terraform destroy` in `infra/` when this is no longer needed rather than
