@@ -1,9 +1,3 @@
-# Architecture
-
-End-to-end flow validated by this POC: invocation → execution → database access → observability.
-
-(Raw Mermaid source for importing elsewhere, e.g. Lucidchart: [`architecture.mmd`](architecture.mmd))
-
 ```mermaid
 flowchart TD
     Op["Operator"] -->|"harness execute pipeline"| Pipeline["Pipeline: rungenericmitigationdemo<br/>(template: rungenericmitigation)"]
