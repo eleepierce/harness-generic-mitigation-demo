@@ -55,7 +55,7 @@ resource "aws_iam_role_policy" "ecr_token_refresher" {
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchCheckLayerAvailability",
         ]
-        Resource = "arn:aws:ecr:us-east-1:547641909728:repository/harness-poc/connectivity-check"
+        Resource = "arn:aws:ecr:us-east-1:547641909728:repository/harness-poc/*"
       },
       {
         Effect   = "Allow"

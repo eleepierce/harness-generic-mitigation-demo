@@ -1,0 +1,37 @@
+pipeline:
+  name: harness-poc-pod-access-test
+  identifier: harnesspocpodaccesstest
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: pod-access-test
+        identifier: podaccesstest
+        description: Tests whether a Harness-orchestrated container can reach into a separate, already-running pod (kubectl exec) and retrieve a file - answers Robert's question about pod-level access, not just DB/host reachability.
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: pod-access-test
+                  identifier: podaccesstestgroup
+                  steps:
+                    - step:
+                        type: Run
+                        name: Retrieve File From Target Pod
+                        identifier: Retrieve_File_From_Target_Pod
+                        timeout: 5m
+                        spec:
+                          connectorRef: harnesspocdockerecr
+                          image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/pod-access-check:v1.0.0
+                          shell: Sh
+                          envVariables:
+                            TARGET_POD: pod-access-target
+                            TARGET_NAMESPACE: default
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+        tags: {}
