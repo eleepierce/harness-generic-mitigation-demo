@@ -1,0 +1,45 @@
+pipeline:
+  name: harness-poc-privileged-schema-probe
+  identifier: harnesspocprivilegedschemaprobe
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: schema-probe
+        identifier: schemaprobe
+        description: Tests whether Harness's own Custom-stage/Run-step YAML schema exposes privileged securityContext or hostPath volumes - the mechanical prerequisite for docker.sock/host-filesystem-equivalent access, the hardest open gap from the generic-mitigation-scripts audit. Confirmed real (not just schema-accepted-and-ignored) via CapEff showing a full capability mask and /host-run showing genuine host /var/run contents. Caveat, not tested here - this ran against a self-managed CND sandbox cluster with no PodSecurity admission configured; a real OTK cluster enforces admission-control policies (privileged, hostNetwork, hostPID are each explicitly blocked, per internal docs) that would very likely reject this same pipeline outside an infra-team-approved namespace exception.
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: schema-probe
+                  identifier: schemaprobegroup
+                  steps:
+                    - step:
+                        type: Run
+                        name: Probe Privileged Field
+                        identifier: Probe_Privileged_Field
+                        timeout: 5m
+                        spec:
+                          connectorRef: harnesspocdockerecr
+                          image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/pod-access-check:v1.0.0
+                          shell: Sh
+                          privileged: true
+                          command: |
+                            echo "--- CapEff (privileged containers show a full capability mask) ---"
+                            grep CapEff /proc/self/status
+                            echo "--- /host-run contents (hostPath volume mounted from host /var/run) ---"
+                            ls -la /host-run/ 2>&1 || echo "MOUNT_NOT_PRESENT"
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+                      volumes:
+                        - mountPath: /host-run
+                          type: HostPath
+                          spec:
+                            path: /var/run
+        tags: {}
