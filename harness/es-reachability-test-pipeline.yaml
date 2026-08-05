@@ -1,0 +1,37 @@
+pipeline:
+  name: harness-poc-es-reachability-test
+  identifier: harnesspocesreachabilitytest
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: es-reachability-test
+        identifier: esreachabilitytest
+        description: Tests whether a Harness-orchestrated container can reach an Elasticsearch instance and run a real command (index+get document round-trip, not just TCP connectivity) - answers the "external stateful systems" gap flagged in the generic-mitigation-scripts audit.
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: es-reachability-test
+                  identifier: esreachabilitytestgroup
+                  steps:
+                    - step:
+                        type: Run
+                        name: Test Elasticsearch Reachability
+                        identifier: Test_Elasticsearch_Reachability
+                        timeout: 5m
+                        spec:
+                          connectorRef: harnesspocdockerecr
+                          image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/es-check:v1.0.0
+                          shell: Sh
+                          envVariables:
+                            ES_HOST: es-target.default.svc.cluster.local
+                            ES_PORT: "9200"
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+        tags: {}

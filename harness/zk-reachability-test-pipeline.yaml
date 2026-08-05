@@ -1,0 +1,37 @@
+pipeline:
+  name: harness-poc-zk-reachability-test
+  identifier: harnesspoczkreachabilitytest
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: zk-reachability-test
+        identifier: zkreachabilitytest
+        description: Tests whether a Harness-orchestrated container can reach a Zookeeper instance and run a real command (create+get znode round-trip, not just TCP connectivity) - answers the "external stateful systems" gap flagged in the generic-mitigation-scripts audit.
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: zk-reachability-test
+                  identifier: zkreachabilitytestgroup
+                  steps:
+                    - step:
+                        type: Run
+                        name: Test Zookeeper Reachability
+                        identifier: Test_Zookeeper_Reachability
+                        timeout: 5m
+                        spec:
+                          connectorRef: harnesspocdockerecr
+                          image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/zk-check:v1.0.0
+                          shell: Sh
+                          envVariables:
+                            ZK_HOST: zk-target.default.svc.cluster.local
+                            ZK_PORT: "2181"
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+        tags: {}
