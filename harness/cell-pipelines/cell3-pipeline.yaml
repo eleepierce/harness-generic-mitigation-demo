@@ -1,0 +1,37 @@
+pipeline:
+  name: harness-poc-cell3-mitigation
+  identifier: harnesspoccell3mitigation
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: cell3-mitigation
+        identifier: cell3mitigation
+        description: One of 3 standalone, statically-defined pipelines simulating "each cell has its own Harness pipeline" (confirmed real architecture per the 08-05 cellularization research) - answers the multi-pipeline fan-out/aggregation question, distinct from the single-pipeline loop-strategy test.
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: cell3-mitigation
+                  identifier: cell3mitigationgroup
+                  steps:
+                    - step:
+                        type: Run
+                        name: Retrieve File From Cell 3
+                        identifier: Retrieve_File_From_Cell_3
+                        timeout: 5m
+                        spec:
+                          connectorRef: harnesspocdockerecr
+                          image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/pod-access-check:v1.0.0
+                          shell: Sh
+                          envVariables:
+                            TARGET_POD: pod-access-target-3
+                            TARGET_NAMESPACE: default
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+        tags: {}

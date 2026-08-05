@@ -8,7 +8,7 @@ pipeline:
     - stage:
         name: pod-access-test
         identifier: podaccesstest
-        description: Tests whether a Harness-orchestrated container can reach into a separate, already-running pod (kubectl exec) and retrieve a file - answers Robert's question about pod-level access, not just DB/host reachability.
+        description: Tests whether a Harness-orchestrated container can reach into a separate, already-running pod (kubectl exec) and retrieve a file - answers Robert's question about pod-level access, not just DB/host reachability. Extended with a repeat strategy to fan the same mitigation out across multiple pods in one pipeline execution - a mechanical proxy for "run one mitigation across a fleet of cells" from the 08-04 cellularization discussion.
         type: Custom
         spec:
           execution:
@@ -27,7 +27,7 @@ pipeline:
                           image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/pod-access-check:v1.0.0
                           shell: Sh
                           envVariables:
-                            TARGET_POD: pod-access-target
+                            TARGET_POD: <+repeat.item>
                             TARGET_NAMESPACE: default
                   stepGroupInfra:
                     type: KubernetesDirect
@@ -35,3 +35,10 @@ pipeline:
                       connectorRef: harnesspoceks
                       namespace: default
         tags: {}
+        strategy:
+          repeat:
+            items:
+              - pod-access-target
+              - pod-access-target-2
+              - pod-access-target-3
+            maxConcurrency: 3

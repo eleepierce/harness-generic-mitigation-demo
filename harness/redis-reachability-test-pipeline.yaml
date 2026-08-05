@@ -1,0 +1,37 @@
+pipeline:
+  name: harness-poc-redis-reachability-test
+  identifier: harnesspocredisreachabilitytest
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: redis-reachability-test
+        identifier: redisreachabilitytest
+        description: Tests whether a Harness-orchestrated container can reach a Redis instance and run a real command (SET/GET round-trip, not just TCP connectivity) - answers the "external stateful systems" gap flagged in the generic-mitigation-scripts audit.
+        type: Custom
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: redis-reachability-test
+                  identifier: redisreachabilitytestgroup
+                  steps:
+                    - step:
+                        type: Run
+                        name: Test Redis Reachability
+                        identifier: Test_Redis_Reachability
+                        timeout: 5m
+                        spec:
+                          connectorRef: harnesspocdockerecr
+                          image: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/redis-check:v1.0.0
+                          shell: Sh
+                          envVariables:
+                            REDIS_HOST: redis-target.default.svc.cluster.local
+                            REDIS_PORT: "6379"
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+        tags: {}
