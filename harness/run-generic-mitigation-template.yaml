@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "1.0.8"
+  versionLabel: "1.1.0"
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -15,6 +15,56 @@ template:
               name: mitigation
               identifier: mitigation
               steps:
+                - step:
+                    type: Run
+                    name: Verify Image Signature
+                    identifier: Verify_Image_Signature
+                    timeout: 2m
+                    spec:
+                      connectorRef: <+stage.variables.verifier_connector>
+                      image: <+stage.variables.verifier_image>
+                      shell: Sh
+                      command: |-
+                        set -euo pipefail
+                        echo "Verifying image signature: <+stage.variables.image>"
+                        cosign verify --insecure-ignore-tlog --key env://COSIGN_PUBLIC_KEY <+stage.variables.image>
+                        echo "✓ Image signature verified successfully"
+                      envVariables:
+                        COSIGN_PUBLIC_KEY: <+stage.variables.cosign_public_key>
+                - step:
+                    type: Run
+                    name: Verify Branch Attestation
+                    identifier: Verify_Branch_Attestation
+                    timeout: 2m
+                    when:
+                      stageStatus: Success
+                      condition: <+stage.variables.environment> != "dev"
+                    spec:
+                      connectorRef: <+stage.variables.verifier_connector>
+                      image: <+stage.variables.verifier_image>
+                      shell: Sh
+                      command: |-
+                        set -euo pipefail
+                        echo "Verifying branch attestation for: <+stage.variables.image>"
+
+                        # Verify attestation and capture output
+                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key env://COSIGN_PUBLIC_KEY <+stage.variables.image>)
+
+                        # Extract branch from attestation
+                        BRANCH=$(echo "$ATTESTATION_OUTPUT" | jq -r '.payload' | base64 -d | jq -r '.predicate.Data.branch')
+
+                        echo "Image was built from branch: $BRANCH"
+
+                        # Enforce main branch in non-dev environments
+                        if [ "$BRANCH" != "main" ]; then
+                          echo "Error: Image was built from non-main branch '$BRANCH'"
+                          echo "Non-main branch images can only be executed in dev environments"
+                          exit 1
+                        fi
+
+                        echo "✓ Branch attestation verified: main"
+                      envVariables:
+                        COSIGN_PUBLIC_KEY: <+stage.variables.cosign_public_key>
                 - step:
                     type: Run
                     name: Run Mitigation Container
@@ -68,5 +118,25 @@ template:
       - name: db_password_secret
         type: String
         description: "Identifier of a Harness secret holding the DB password (e.g. 'harnessPocDbPasswordV2'). Passed as a name and resolved directly in this template, not as a Secret-type variable — see architecture note in the repo README about why."
+        required: true
+        value: <+input>
+      - name: cosign_public_key
+        type: String
+        description: "PEM-encoded public key from AWS KMS for cosign signature verification. Extracted offline via 'cosign public-key --key awskms:///arn:aws:kms:...' and pinned here. No live KMS access needed at runtime."
+        required: true
+        value: <+input>
+      - name: verifier_image
+        type: String
+        description: "Container image with cosign and jq installed for signature verification (e.g. alpine/cosign or custom verifier image)"
+        required: true
+        value: <+input>
+      - name: verifier_connector
+        type: String
+        description: "Identifier of the DockerRegistry connector for pulling the verifier image. Kept separate from docker_connector to decouple verification from team-supplied mitigation images."
+        required: true
+        value: <+input>
+      - name: environment
+        type: String
+        description: "Environment name (e.g. 'dev', 'prod'). Branch attestation check is skipped when environment='dev', enforced otherwise."
         required: true
         value: <+input>
