@@ -1,6 +1,6 @@
 pipeline:
-  name: run-generic-mitigation-demo
-  identifier: rungenericmitigationdemo
+  name: run-generic-mitigation-redis
+  identifier: rungenericmitigationredis
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
   tags: {}
@@ -26,10 +26,10 @@ pipeline:
               - name: env_json
                 type: String
                 value: <+input>
-                # Caller (e.g. domain-manifest-fanout-orchestrator.sh) constructs this, e.g.:
-                # {"TARGET_HOST": "...", "TARGET_PORT": "3306", "DB_USER": "admin",
-                #  "DB_PASSWORD": "__MITIGATION_SECRET__"}
               - name: secret_identifier
                 type: String
                 value: <+input>
-                # e.g. harnessPocDbPasswordV2
+                # No real secret needed for this mitigation - pass a harmless existing
+                # identifier (its value is never referenced since env_json contains no
+                # __MITIGATION_SECRET__ placeholder). e.g. ecrTokenFromSecretsManager
+                # e.g. {"REDIS_HOST": "redis-target.default.svc.cluster.local", "REDIS_PORT": "6379"}

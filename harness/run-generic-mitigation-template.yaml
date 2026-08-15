@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "1.0.8"
+  versionLabel: "2.0.0"
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -25,10 +25,8 @@ template:
                       image: <+stage.variables.image>
                       shell: Sh
                       envVariables:
-                        TARGET_HOST: <+stage.variables.target_host>
-                        TARGET_PORT: <+stage.variables.target_port>
-                        DB_USER: <+stage.variables.db_user>
-                        DB_PASSWORD: <+secrets.getValue(<+stage.variables.db_password_secret>)>
+                        MITIGATION_ENV_JSON: <+stage.variables.env_json>
+                        MITIGATION_SECRET_VALUE: <+secrets.getValue(<+stage.variables.secret_identifier>)>
               stepGroupInfra:
                 type: KubernetesDirect
                 spec:
@@ -38,16 +36,6 @@ template:
       - name: image
         type: String
         description: "Full image reference for the blessed mitigation container"
-        required: true
-        value: <+input>
-      - name: target_host
-        type: String
-        description: "Target host to test reachability against"
-        required: true
-        value: <+input>
-      - name: target_port
-        type: String
-        description: "Target port to test reachability against"
         required: true
         value: <+input>
       - name: docker_connector
@@ -60,13 +48,33 @@ template:
         description: "Identifier of the team's K8sCluster connector (their delegate/cluster)"
         required: true
         value: <+input>
-      - name: db_user
+      - name: env_json
         type: String
-        description: "DB username. Container runs real SQL (not just a connectivity check) using this and db_password."
+        description: >-
+          JSON object of env vars the mitigation container needs, e.g.
+          {"TARGET_HOST": "...", "TARGET_PORT": "3306"} or {"REDIS_HOST": "...", "REDIS_PORT": "6379"}.
+          Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars
+          before the real check script runs - this is what makes the template genuinely
+          mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one
+          mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296).
+          For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a
+          substring in this JSON - confirmed empirically that it resolves to the literal string
+          "null" rather than the real value when nested inside a larger String-type variable this
+          way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying
+          lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put
+          the literal placeholder "__MITIGATION_SECRET__" at that key, e.g.
+          {"DB_PASSWORD": "__MITIGATION_SECRET__"}, and set secret_identifier below - the wrapper
+          substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var.
         required: true
         value: <+input>
-      - name: db_password_secret
+      - name: secret_identifier
         type: String
-        description: "Identifier of a Harness secret holding the DB password (e.g. 'harnessPocDbPasswordV2'). Passed as a name and resolved directly in this template, not as a Secret-type variable — see architecture note in the repo README about why."
+        description: >-
+          Identifier of a Harness secret to make available to the container as
+          MITIGATION_SECRET_VALUE (resolved as this variable's whole value, the only way
+          getValue() resolves correctly here - see env_json's description). Required even for
+          mitigations with no real secret need - pass any existing, harmless secret identifier
+          in that case (its value is simply never referenced, since env_json won't contain the
+          "__MITIGATION_SECRET__" placeholder).
         required: true
         value: <+input>
