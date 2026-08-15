@@ -1,0 +1,88 @@
+# Reference example only - NOT this repo's own domain manifest. Copied verbatim from
+# twilio-internal/cloud-native-monorepo-foundation's own domain-manifest.yaml (the
+# Foundation repo's self-test fixture, dev/stage/prod with 2/3/5 rings respectively) so
+# there's a real, schema-correct manifest to prototype expand/fan-out against, without
+# needing write access to an actual CND team's domain. Schema confirmed against
+# docs/cloud-native/ci-cd/domain-manifest.md in that repo, and against Pradeep Chokka's
+# "Introducing the Domain Manifest for Deployments" V2 demo (2026-08-11): rings are
+# top-level ordered structures per environment, region is an attribute on the cell.
+#
+# Used by expand-domain-manifest.sh / domain-manifest-fanout-orchestrator.sh to prove the
+# fan-out wiring pattern (PLATSRE-1296 cellularization thread) against CND, ahead of DO's
+# OTK backport landing - see the "how to apply" note at the end of ssm_divergence_effort.md.
+apiVersion: cnd.twilio.io/v1alpha1
+kind: DomainManifest
+metadata:
+  name: cloud-native-monorepo-foundation
+spec:
+  components:
+    - name: example-service
+      type: service
+      registry: 018537234677.dkr.ecr.us-east-1.amazonaws.com
+      repo: github.com/twilio-internal/cloud-native-monorepo-foundation/services/example-service
+    - name: example-brownfield-service
+      type: service
+      registry: 018537234677.dkr.ecr.us-east-1.amazonaws.com
+      repo: github.com/twilio-internal/cloud-native-monorepo-foundation/services/example-brownfield-service
+    - name: example-brownfield-service-direct
+      type: service
+      registry: 018537234677.dkr.ecr.us-east-1.amazonaws.com
+      repo: github.com/twilio-internal/cloud-native-monorepo-foundation/services/example-brownfield-service-direct
+  topology:
+    environments:
+      dev:
+        rings:
+          - ring: 0
+            cells:
+              - { name: cell-1, region: us-east-1 }
+              - { name: cell-1, region: us-east-2 }
+              - { name: cell-1, region: us-west-2 }
+          - ring: 1
+            cells:
+              - { name: cell-2, region: us-east-1 }
+              - { name: cell-2, region: us-east-2 }
+              - { name: cell-2, region: us-west-2 }
+      stage:
+        rings:
+          - ring: 0
+            cells:
+              - { name: cell-1, region: us-east-1 }
+              - { name: cell-1, region: us-east-2 }
+              - { name: cell-1, region: us-west-2 }
+          - ring: 1
+            cells:
+              - { name: cell-2, region: us-east-1 }
+              - { name: cell-2, region: us-west-2 }
+              - { name: cell-2, region: eu-west-1 }
+          - ring: 2
+            cells:
+              - { name: cell-3, region: us-east-1 }
+              - { name: cell-3, region: us-east-2 }
+              - { name: cell-3, region: eu-west-1 }
+      prod:
+        rings:
+          - ring: 0
+            cells:
+              - { name: cell-1, region: us-east-1 }
+              - { name: cell-1, region: us-east-2 }
+              - { name: cell-1, region: us-west-2 }
+          - ring: 1
+            cells:
+              - { name: cell-2, region: us-east-1 }
+              - { name: cell-2, region: us-east-2 }
+              - { name: cell-2, region: us-west-2 }
+          - ring: 2
+            cells:
+              - { name: cell-3, region: us-east-1 }
+              - { name: cell-3, region: us-west-2 }
+              - { name: cell-3, region: eu-west-1 }
+          - ring: 3
+            cells:
+              - { name: cell-4, region: us-east-1 }
+              - { name: cell-4, region: eu-west-1 }
+              - { name: cell-4, region: ap-southeast-1 }
+          - ring: 4
+            cells:
+              - { name: cell-5, region: us-east-1 }
+              - { name: cell-5, region: us-east-2 }
+              - { name: cell-5, region: us-west-2 }
