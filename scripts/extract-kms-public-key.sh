@@ -6,6 +6,15 @@ set -euo pipefail
 
 KMS_KEY_ARN="arn:aws:kms:us-east-1:947708912703:key/b3b51003-1cac-4a49-b4d9-e6fdcfb268f3"
 
+# Derive the region and bare key ID from the ARN.
+# cosign's awskms:// URI parser rejects a full ARN in some versions
+# ("Invalid arn <region>"), so we pass the bare key ID and pin the region
+# explicitly. This also avoids picking up a conflicting AWS_REGION from the
+# active profile (e.g. the mitigation-scripts profile defaults to us-west-2
+# while this key lives in us-east-1).
+KMS_KEY_REGION=$(echo "${KMS_KEY_ARN}" | cut -d: -f4)
+KMS_KEY_ID=${KMS_KEY_ARN##*/}
+
 # Print to stderr so it doesn't interfere with stdout redirect
 echo "============================================================" >&2
 echo "KMS Public Key Extraction - PLATSRE-1652" >&2
@@ -68,7 +77,7 @@ fi
 echo "  Testing KMS access (this may take a few seconds)..." >&2
 
 # Test KMS access with better error handling
-if ! KMS_TEST=$(aws kms get-public-key --key-id "${KMS_KEY_ARN}" --region us-east-1 2>&1); then
+if ! KMS_TEST=$(aws kms get-public-key --key-id "${KMS_KEY_ARN}" --region "${KMS_KEY_REGION}" 2>&1); then
     echo "✗ Error: Cannot access KMS key" >&2
     echo "" >&2
     echo "KMS Error Details:" >&2
@@ -92,7 +101,7 @@ echo "" >&2
 # Step 4: Extract public key using cosign
 echo "[4/4] Extracting public key with cosign..." >&2
 
-if ! PUBLIC_KEY=$(cosign public-key --key "awskms:///${KMS_KEY_ARN}" 2>&1); then
+if ! PUBLIC_KEY=$(AWS_REGION="${KMS_KEY_REGION}" AWS_DEFAULT_REGION="${KMS_KEY_REGION}" cosign public-key --key "awskms:///${KMS_KEY_ID}" 2>&1); then
     echo "✗ Error: cosign failed to extract public key" >&2
     echo "" >&2
     echo "Cosign Error:" >&2
