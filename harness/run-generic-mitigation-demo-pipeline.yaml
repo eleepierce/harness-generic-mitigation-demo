@@ -35,9 +35,6 @@ pipeline:
               - name: secret_identifier
                 type: String
                 value: <+input>
-              - name: cosign_public_key
-                type: String
-                value: <+input>
               - name: verifier_image
                 type: String
                 value: <+input>

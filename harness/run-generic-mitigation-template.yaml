@@ -27,10 +27,8 @@ template:
                       command: |-
                         set -euo pipefail
                         echo "Verifying image signature: <+stage.variables.image_fully_qualified>"
-                        cosign verify --insecure-ignore-tlog --key env://COSIGN_PUBLIC_KEY <+stage.variables.image_fully_qualified>
+                        cosign verify --insecure-ignore-tlog --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>
                         echo "✓ Image signature verified successfully"
-                      envVariables:
-                        COSIGN_PUBLIC_KEY: <+stage.variables.cosign_public_key>
                 - step:
                     type: Run
                     name: Verify Branch Attestation
@@ -48,7 +46,7 @@ template:
                         echo "Verifying branch attestation for: <+stage.variables.image_fully_qualified>"
 
                         # Verify attestation and capture output
-                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key env://COSIGN_PUBLIC_KEY <+stage.variables.image_fully_qualified>)
+                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>)
 
                         # Extract branch from attestation
                         BRANCH=$(echo "$ATTESTATION_OUTPUT" | jq -r '.payload' | base64 -d | jq -r '.predicate.Data.branch')
@@ -63,8 +61,6 @@ template:
                         fi
 
                         echo "✓ Branch attestation verified: main"
-                      envVariables:
-                        COSIGN_PUBLIC_KEY: <+stage.variables.cosign_public_key>
                 - step:
                     type: Run
                     name: Run Mitigation Container
@@ -113,14 +109,9 @@ template:
         description: Identifier of a Harness secret to make available to the container as MITIGATION_SECRET_VALUE (resolved as this variable's whole value, the only way getValue() resolves correctly here - see env_json's description). Required even for mitigations with no real secret need - pass any existing, harmless secret identifier in that case (its value is simply never referenced, since env_json won't contain the "__MITIGATION_SECRET__" placeholder).
         required: true
         value: <+input>
-      - name: cosign_public_key
-        type: String
-        description: PEM-encoded public key from AWS KMS for cosign signature verification, including the -----BEGIN/END PUBLIC KEY----- armor. Extracted offline via 'cosign public-key --key awskms:///arn:aws:kms:...' and pinned here. No live KMS access needed at runtime.
-        required: true
-        value: <+input>
       - name: verifier_image
         type: String
-        description: Container image with cosign and jq installed for signature verification (e.g. alpine/cosign or custom verifier image)
+        description: Container image used for signature verification. Must contain cosign, jq, and the trusted KMS public key baked in at /usr/local/share/cosign-public.key (the path the verify steps pass to cosign --key). The production admin-verifier image satisfies this - see generic-mitigation-scripts verifier.sh, which uses the same file. Passing the key via an env var was dropped in favour of the baked-in file because multi-line PEM values are mangled in transit through Harness String variables (PEM decoding failed).
         required: true
         value: <+input>
       - name: verifier_connector
