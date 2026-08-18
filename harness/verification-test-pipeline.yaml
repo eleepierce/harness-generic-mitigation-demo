@@ -8,38 +8,31 @@ pipeline:
     - stage:
         name: test-verification
         identifier: test_verification
-        description: "Test cosign verification - PLATSRE-1652"
+        description: Test cosign verification - PLATSRE-1652
         template:
           templateRef: rungenericmitigation
-          versionLabel: "1.1.0"
+          versionLabel: 2.0.0
           templateInputs:
             type: Custom
             variables:
               - name: image
                 type: String
-                value: <+input>.default(alpine:latest).allowedValues(alpine:latest,busybox:latest,registry.twilio.com/generic-mitigation-scripts/admin-verifier:latest)
-              - name: target_host
-                type: String
-                value: <+input>.default(localhost)
-              - name: target_port
-                type: String
-                value: <+input>.default(3306)
+                value: <+input>.default(alpine:latest).allowedValues(alpine:latest,busybox:latest,github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.1)
               - name: docker_connector
                 type: String
-                value: <+input>.default(harnesspocdockerecr)
+                value: <+input>.default(otkEcrBroker)
               - name: k8s_connector
                 type: String
                 value: <+input>.default(harnesspoceks)
-              - name: db_user
+              - name: env_json
                 type: String
-                value: <+input>.default(testuser)
-              - name: db_password_secret
+                value: <+input>.default({"TARGET_HOST":"localhost","TARGET_PORT":"3306"})
+              - name: secret_identifier
                 type: String
                 value: <+input>.default(harnessPocDbPasswordV2)
               - name: cosign_public_key
                 type: String
                 value: <+input>
-                description: "Paste the full PEM-encoded public key here"
               - name: verifier_image
                 type: String
                 value: <+input>.default(alpine/cosign:latest)
