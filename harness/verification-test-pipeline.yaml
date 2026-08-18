@@ -18,6 +18,9 @@ pipeline:
               - name: image
                 type: String
                 value: <+input>.default(alpine:latest).allowedValues(alpine:latest,busybox:latest,github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.1)
+              - name: image_fully_qualified
+                type: String
+                value: <+input>.default(018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.1)
               - name: docker_connector
                 type: String
                 value: <+input>.default(otkEcrBroker)

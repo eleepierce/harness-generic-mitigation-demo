@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "2.0.0"
+  versionLabel: 2.0.0
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -26,8 +26,8 @@ template:
                       shell: Sh
                       command: |-
                         set -euo pipefail
-                        echo "Verifying image signature: <+stage.variables.image>"
-                        cosign verify --insecure-ignore-tlog --key env://COSIGN_PUBLIC_KEY <+stage.variables.image>
+                        echo "Verifying image signature: <+stage.variables.image_fully_qualified>"
+                        cosign verify --insecure-ignore-tlog --key env://COSIGN_PUBLIC_KEY <+stage.variables.image_fully_qualified>
                         echo "✓ Image signature verified successfully"
                       envVariables:
                         COSIGN_PUBLIC_KEY: <+stage.variables.cosign_public_key>
@@ -45,10 +45,10 @@ template:
                       shell: Sh
                       command: |-
                         set -euo pipefail
-                        echo "Verifying branch attestation for: <+stage.variables.image>"
+                        echo "Verifying branch attestation for: <+stage.variables.image_fully_qualified>"
 
                         # Verify attestation and capture output
-                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key env://COSIGN_PUBLIC_KEY <+stage.variables.image>)
+                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key env://COSIGN_PUBLIC_KEY <+stage.variables.image_fully_qualified>)
 
                         # Extract branch from attestation
                         BRANCH=$(echo "$ATTESTATION_OUTPUT" | jq -r '.payload' | base64 -d | jq -r '.predicate.Data.branch')
@@ -85,66 +85,51 @@ template:
     variables:
       - name: image
         type: String
-        description: "Full image reference for the blessed mitigation container"
+        description: Image reference relative to docker_connector's registry (used by the Run Mitigation Container step, which resolves it by prepending the connector's own registry host)
+        required: true
+        value: <+input>
+      - name: image_fully_qualified
+        type: String
+        description: The SAME image as 'image', but as a complete registry-qualified reference (e.g. 018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.1). Required separately because cosign has no concept of Harness connectors -- it parses this string directly as a standard OCI reference, so it needs the full host, not a connector-relative path.
         required: true
         value: <+input>
       - name: docker_connector
         type: String
-        description: "Identifier of the team's DockerRegistry connector for the mitigation image"
+        description: Identifier of the team's DockerRegistry connector for the mitigation image
         required: true
         value: <+input>
       - name: k8s_connector
         type: String
-        description: "Identifier of the team's K8sCluster connector (their delegate/cluster)"
+        description: Identifier of the team's K8sCluster connector (their delegate/cluster)
         required: true
         value: <+input>
       - name: env_json
         type: String
-        description: >-
-          JSON object of env vars the mitigation container needs, e.g.
-          {"TARGET_HOST": "...", "TARGET_PORT": "3306"} or {"REDIS_HOST": "...", "REDIS_PORT": "6379"}.
-          Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars
-          before the real check script runs - this is what makes the template genuinely
-          mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one
-          mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296).
-          For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a
-          substring in this JSON - confirmed empirically that it resolves to the literal string
-          "null" rather than the real value when nested inside a larger String-type variable this
-          way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying
-          lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put
-          the literal placeholder "__MITIGATION_SECRET__" at that key, e.g.
-          {"DB_PASSWORD": "__MITIGATION_SECRET__"}, and set secret_identifier below - the wrapper
-          substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var.
+        description: "JSON object of env vars the mitigation container needs, e.g. {\"TARGET_HOST\": \"...\", \"TARGET_PORT\": \"3306\"} or {\"REDIS_HOST\": \"...\", \"REDIS_PORT\": \"6379\"}. Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars before the real check script runs - this is what makes the template genuinely mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296). For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a substring in this JSON - confirmed empirically that it resolves to the literal string \"null\" rather than the real value when nested inside a larger String-type variable this way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put the literal placeholder \"__MITIGATION_SECRET__\" at that key, e.g. {\"DB_PASSWORD\": \"__MITIGATION_SECRET__\"}, and set secret_identifier below - the wrapper substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var."
         required: true
         value: <+input>
       - name: secret_identifier
         type: String
-        description: >-
-          Identifier of a Harness secret to make available to the container as
-          MITIGATION_SECRET_VALUE (resolved as this variable's whole value, the only way
-          getValue() resolves correctly here - see env_json's description). Required even for
-          mitigations with no real secret need - pass any existing, harmless secret identifier
-          in that case (its value is simply never referenced, since env_json won't contain the
-          "__MITIGATION_SECRET__" placeholder).
+        description: Identifier of a Harness secret to make available to the container as MITIGATION_SECRET_VALUE (resolved as this variable's whole value, the only way getValue() resolves correctly here - see env_json's description). Required even for mitigations with no real secret need - pass any existing, harmless secret identifier in that case (its value is simply never referenced, since env_json won't contain the "__MITIGATION_SECRET__" placeholder).
         required: true
         value: <+input>
       - name: cosign_public_key
         type: String
-        description: "PEM-encoded public key from AWS KMS for cosign signature verification. Extracted offline via 'cosign public-key --key awskms:///arn:aws:kms:...' and pinned here. No live KMS access needed at runtime."
+        description: PEM-encoded public key from AWS KMS for cosign signature verification, including the -----BEGIN/END PUBLIC KEY----- armor. Extracted offline via 'cosign public-key --key awskms:///arn:aws:kms:...' and pinned here. No live KMS access needed at runtime.
         required: true
         value: <+input>
       - name: verifier_image
         type: String
-        description: "Container image with cosign and jq installed for signature verification (e.g. alpine/cosign or custom verifier image)"
+        description: Container image with cosign and jq installed for signature verification (e.g. alpine/cosign or custom verifier image)
         required: true
         value: <+input>
       - name: verifier_connector
         type: String
-        description: "Identifier of the DockerRegistry connector for pulling the verifier image. Kept separate from docker_connector to decouple verification from team-supplied mitigation images."
+        description: Identifier of the DockerRegistry connector for pulling the verifier image. Kept separate from docker_connector to decouple verification from team-supplied mitigation images.
         required: true
         value: <+input>
       - name: environment
         type: String
-        description: "Environment name (e.g. 'dev', 'prod'). Branch attestation check is skipped when environment='dev', enforced otherwise."
+        description: Environment name (e.g. 'dev', 'prod'). Branch attestation check is skipped when environment='dev', enforced otherwise.
         required: true
         value: <+input>
