@@ -1,8 +1,11 @@
 FROM alpine:3.19
 
-RUN apk add --no-cache bash curl
+RUN apk add --no-cache bash curl jq
 
 COPY es-check.sh /usr/local/bin/es-check.sh
 RUN chmod +x /usr/local/bin/es-check.sh
 
-ENTRYPOINT ["/usr/local/bin/es-check.sh"]
+COPY mitigation-entrypoint.sh /usr/local/bin/mitigation-entrypoint.sh
+RUN chmod +x /usr/local/bin/mitigation-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/mitigation-entrypoint.sh", "/usr/local/bin/es-check.sh"]
