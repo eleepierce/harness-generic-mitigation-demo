@@ -17,17 +17,17 @@ pipeline:
             variables:
               # image / docker_connector drive the Run Mitigation Container step ONLY.
               # It runs the image's ENTRYPOINT (no command override), so Harness must
-              # resolve the entrypoint from the manifest -- and a dotted first path
-              # component (e.g. github.com/...) is misparsed as a registry host, hitting
-              # github.com -> 404. So the mitigation image must be connector-RELATIVE.
-              # Use the POC's canonical connectivity-check (network-test) image on the
-              # harness-poc ECR connector; its first component is not a hostname, so the
-              # connector's registry URL prepends cleanly for both pull and entrypoint.
-              # (The verify steps use image_fully_qualified + otkEcrBroker instead, and
-              # dodge this because they DO specify an explicit command.)
+              # resolve the entrypoint from the manifest -- and that resolver ignores the
+              # connector's registry URL, parsing the image string with Docker defaults:
+              #   dotted first component (github.com/...) -> that literal host   -> 404
+              #   bare ref        (harness-poc/...)       -> docker.io           -> 401
+              # Only a FULLY-QUALIFIED ECR ref works (resolver hits the real host, and the
+              # connector supplies matching creds) -- same reason the verify steps use
+              # image_fully_qualified. Use the POC's connectivity-check (network-test)
+              # image at its real 547641909728 ECR host, with the harness-poc ECR connector.
               - name: image
                 type: String
-                value: <+input>.default(harness-poc/connectivity-check:v1.0.4).allowedValues(harness-poc/connectivity-check:v1.0.4,alpine:latest,busybox:latest,github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2)
+                value: <+input>.default(547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.4).allowedValues(547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.4,alpine:latest,busybox:latest,github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2)
               - name: image_fully_qualified
                 type: String
                 value: <+input>.default(018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2)
