@@ -27,6 +27,18 @@ template:
                       command: |-
                         set -euo pipefail
                         echo "Verifying image signature: <+stage.variables.image_fully_qualified>"
+
+                        # cosign reaches ECR with its OWN keychain, not the Harness connector.
+                        # The verifier image ships docker-credential-ecr-login but never
+                        # registers it, so cosign would authenticate anonymously and get 401.
+                        # Register the helper for the image's registry host here; it then uses
+                        # the delegate node role's ambient creds (IMDS) to fetch a token. Pull
+                        # is authorized by the admin-verifier ecr_policy.json node-role grant.
+                        REGISTRY_HOST=$(echo "<+stage.variables.image_fully_qualified>" | cut -d/ -f1)
+                        export DOCKER_CONFIG=/tmp/.docker
+                        mkdir -p "$DOCKER_CONFIG"
+                        printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
+
                         cosign verify --insecure-ignore-tlog --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>
                         echo "✓ Image signature verified successfully"
                 - step:
@@ -44,6 +56,13 @@ template:
                       command: |-
                         set -euo pipefail
                         echo "Verifying branch attestation for: <+stage.variables.image_fully_qualified>"
+
+                        # Register the ECR credential helper for cosign's keychain (see the
+                        # Verify Image Signature step for why this is needed).
+                        REGISTRY_HOST=$(echo "<+stage.variables.image_fully_qualified>" | cut -d/ -f1)
+                        export DOCKER_CONFIG=/tmp/.docker
+                        mkdir -p "$DOCKER_CONFIG"
+                        printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
 
                         # Verify attestation and capture output
                         ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>)
