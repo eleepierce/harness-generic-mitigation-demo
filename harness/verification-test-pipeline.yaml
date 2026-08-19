@@ -40,12 +40,13 @@ pipeline:
               - name: k8s_connector
                 type: String
                 value: <+input>.default(harnesspoceks)
-              # TEST_TYPE=dig: a DNS lookup needs no NET_RAW / reachable listener (unlike
-              # ping/nc), and dig exits 0 as long as the pod resolver answers -- so the
-              # mitigation step reliably goes green. TARGET_HOST is arbitrary here.
+              # connectivity-check:v1.0.4 requires TARGET_HOST + TARGET_PORT and does a
+              # plain TCP connect (it runs "real SQL" only if DB_USER/DB_PASSWORD are also
+              # given). For a reliable green, target the in-cluster Kubernetes API service:
+              # kubernetes.default.svc:443 is always listening and reachable from any pod.
               - name: env_json
                 type: String
-                value: <+input>.default({"TARGET_HOST":"localhost","TEST_TYPE":"dig"})
+                value: <+input>.default({"TARGET_HOST":"kubernetes.default.svc","TARGET_PORT":"443"})
               - name: secret_identifier
                 type: String
                 value: <+input>.default(harnessPocDbPasswordV2)
