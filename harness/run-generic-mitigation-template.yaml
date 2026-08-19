@@ -92,19 +92,15 @@ template:
                       connectorRef: <+stage.variables.docker_connector>
                       image: <+stage.variables.image>
                       shell: Sh
-                      # TEMPORARY DIAGNOSTIC (revert to no-command once confirmed):
-                      # The previous run reached redis-check.sh with REDIS_HOST unset, meaning
-                      # the wrapper's MITIGATION_ENV_JSON decode produced nothing. Print the
-                      # exact bytes we receive (length + raw) to distinguish an empty/stale
-                      # value from quote-mangling, then hand off to the image's real wrapper +
-                      # check script so this run is still a genuine end-to-end attempt.
-                      # NOTE: a command bypasses the image ENTRYPOINT, so we invoke the wrapper
-                      # explicitly here; this hardcodes the redis-check path and is ONLY for
-                      # diagnosis -- the permanent step has no command (relies on ENTRYPOINT).
-                      command: |-
-                        echo "MITIGATION_ENV_JSON length: $(printf '%s' "${MITIGATION_ENV_JSON:-UNSET}" | wc -c)"
-                        echo "MITIGATION_ENV_JSON raw:    [${MITIGATION_ENV_JSON:-UNSET}]"
-                        exec /usr/local/bin/mitigation-entrypoint.sh /usr/local/bin/redis-check.sh
+                      # No command: the step runs the image's ENTRYPOINT, which is the
+                      # mitigation-entrypoint.sh wrapper. The wrapper decodes MITIGATION_ENV_JSON
+                      # into real env vars and substitutes the secret placeholder before exec'ing
+                      # the image's real check script -- this is what keeps the template
+                      # mitigation-agnostic (see the env_json variable description). The image
+                      # MUST carry that wrapper (v2.0.0-compatible); an image built before the
+                      # wrapper was added exec's its check script directly and never sees the
+                      # decoded vars (empirically: exit 127 "mitigation-entrypoint.sh: not found"
+                      # / REDIS_HOST unset). Verified green end-to-end with redis-check:v2.0.0.
                       envVariables:
                         MITIGATION_ENV_JSON: <+stage.variables.env_json>
                         MITIGATION_SECRET_VALUE: <+secrets.getValue(<+stage.variables.secret_identifier>)>
