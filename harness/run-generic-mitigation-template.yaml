@@ -92,6 +92,19 @@ template:
                       connectorRef: <+stage.variables.docker_connector>
                       image: <+stage.variables.image>
                       shell: Sh
+                      # TEMPORARY DIAGNOSTIC (revert to no-command once confirmed):
+                      # The previous run reached redis-check.sh with REDIS_HOST unset, meaning
+                      # the wrapper's MITIGATION_ENV_JSON decode produced nothing. Print the
+                      # exact bytes we receive (length + raw) to distinguish an empty/stale
+                      # value from quote-mangling, then hand off to the image's real wrapper +
+                      # check script so this run is still a genuine end-to-end attempt.
+                      # NOTE: a command bypasses the image ENTRYPOINT, so we invoke the wrapper
+                      # explicitly here; this hardcodes the redis-check path and is ONLY for
+                      # diagnosis -- the permanent step has no command (relies on ENTRYPOINT).
+                      command: |-
+                        echo "MITIGATION_ENV_JSON length: $(printf '%s' "${MITIGATION_ENV_JSON:-UNSET}" | wc -c)"
+                        echo "MITIGATION_ENV_JSON raw:    [${MITIGATION_ENV_JSON:-UNSET}]"
+                        exec /usr/local/bin/mitigation-entrypoint.sh /usr/local/bin/redis-check.sh
                       envVariables:
                         MITIGATION_ENV_JSON: <+stage.variables.env_json>
                         MITIGATION_SECRET_VALUE: <+secrets.getValue(<+stage.variables.secret_identifier>)>
