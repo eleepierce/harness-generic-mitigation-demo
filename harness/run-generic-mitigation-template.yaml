@@ -86,7 +86,7 @@ template:
         value: <+input>
       - name: image_fully_qualified
         type: String
-        description: The SAME image as 'image', but as a complete registry-qualified reference (e.g. 018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.1). Required separately because cosign has no concept of Harness connectors -- it parses this string directly as a standard OCI reference, so it needs the full host, not a connector-relative path.
+        description: The SAME image as 'image', but as a complete registry-qualified reference (e.g. 018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2). Required separately because cosign has no concept of Harness connectors -- it parses this string directly as a standard OCI reference, so it needs the full host, not a connector-relative path.
         required: true
         value: <+input>
       - name: docker_connector
