@@ -32,9 +32,13 @@ pipeline:
                 # rebuilt tag that INCLUDES the wrapper (added in 2448b50). Fully-qualified to the
                 # 547641909728 ECR host because the entrypoint resolver ignores the connector URL.
                 value: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/redis-check:v2.0.0
+              # Runtime input (default = the signed admin-verifier, so normal runs are green)
+              # so negative tests can override it in the Run form -- e.g. point it at an
+              # unsigned image to prove Verify Image Signature blocks execution. Safe as a
+              # .default() (no ".default" substring to trip the truncation bug seen on env_json).
               - name: image_fully_qualified
                 type: String
-                value: 018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2
+                value: <+input>.default(018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2)
               - name: docker_connector
                 type: String
                 value: harnesspocdockerecr
