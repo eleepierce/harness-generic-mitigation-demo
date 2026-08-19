@@ -25,9 +25,12 @@ pipeline:
               # connector supplies matching creds) -- same reason the verify steps use
               # image_fully_qualified. Use the POC's connectivity-check (network-test)
               # image at its real 547641909728 ECR host, with the harness-poc ECR connector.
+              # No .allowedValues() here: a long dotted ECR host inside allowedValues
+              # broke plan creation ("Value not provided for required variable: image").
+              # Match image_fully_qualified's proven pattern -- plain .default() only.
               - name: image
                 type: String
-                value: <+input>.default(547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.4).allowedValues(547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.4,alpine:latest,busybox:latest,github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2)
+                value: <+input>.default(547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/connectivity-check:v1.0.4)
               - name: image_fully_qualified
                 type: String
                 value: <+input>.default(018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2)
