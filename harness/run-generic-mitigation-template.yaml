@@ -67,8 +67,11 @@ template:
                         # Verify attestation and capture output
                         ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>)
 
-                        # Extract branch from attestation
-                        BRANCH=$(echo "$ATTESTATION_OUTPUT" | jq -r '.payload' | base64 -d | jq -r '.predicate.Data.branch')
+                        # Extract branch from attestation. .predicate.Data is a stringified
+                        # JSON blob, so it must be re-parsed with a second jq (matches the
+                        # production verifier.sh) -- indexing .predicate.Data.branch directly
+                        # fails with "Cannot index string with string".
+                        BRANCH=$(echo "$ATTESTATION_OUTPUT" | jq -r '.payload' | base64 -d | jq -r '.predicate.Data' | jq -r '.branch')
 
                         echo "Image was built from branch: $BRANCH"
 
