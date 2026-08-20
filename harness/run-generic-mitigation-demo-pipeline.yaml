@@ -10,7 +10,7 @@ pipeline:
         identifier: mitigation
         template:
           templateRef: rungenericmitigation
-          versionLabel: "2.1.0"
+          versionLabel: 2.1.0
           templateInputs:
             type: Custom
             variables:

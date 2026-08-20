@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "2.1.0"
+  versionLabel: 2.1.0
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
