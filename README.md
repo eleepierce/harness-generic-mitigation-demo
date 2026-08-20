@@ -6,21 +6,20 @@ POC for PLATSRE-1537 - Harness as a mitigation invocation front door.
 
 ## Layout
 
-## Prod gate (PLATSRE-1653)
+## Prod gate
 
 `run-generic-mitigation` v2.1.0 adds a `Prod Ticket Gate` step that runs on the delegate
 before the mitigation step group. It takes two new stage variables:
 
 - `environment` (required, `dev`/`stage`/`prod`) — sourced from the domain manifest by the
   fan-out orchestrator.
-- `ticket_id` (optional) — a linked incident/Jira key, e.g. `PLATSRE-1653`.
+- `ticket_id` (optional) — a linked incident/Jira key, e.g. `PROJECT-123`.
 
 For `environment=prod` a `ticket_id` matching the Jira issue-key pattern (`PROJECT-123`) is
 required, or the run fails before the mitigation container executes. If the delegate has
 `JIRA_BASE_URL` + `JIRA_TOKEN` set, the ticket is additionally verified to exist via the Jira
 API (definitive 404/401/403 blocks; transport errors fall back to pattern-only). `dev`/`stage`
-runs need no ticket — matching SSM's dev-vs-prod distinction. `domain-manifest-fanout-orchestrator.sh`
-takes `ticket_id` as its 10th arg and refuses prod fan-outs without a valid one.
+runs need no ticket — matching SSM's dev-vs-prod distinction.
 
 ## Layout
 
