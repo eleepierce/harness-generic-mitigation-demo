@@ -48,6 +48,5 @@ pipeline:
                 # dev|stage|prod - unrelated to ticket_id
               - name: ticket_id
                 type: String
-                value: ""
-                # Always optional, matching SSM; format-checked (Jira/inc-/pd-) if provided.
-                # Hardcoded empty so it's not prompted at runtime - set a value here to record one.
+                value: <+input>
+                # Always optional, matching SSM; format-checked (Jira/inc-/pd-) if provided

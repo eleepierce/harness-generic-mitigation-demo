@@ -212,4 +212,4 @@ template:
           of those three ID schemes (format only, no live existence check) and fails the
           run the same way SSM's own validator would on a malformed value.
         required: false
-        value: <+input>.default("")
+        value: <+input>
