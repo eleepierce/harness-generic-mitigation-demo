@@ -1,0 +1,61 @@
+pipeline:
+  name: verification-test
+  identifier: verificationtest
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  stages:
+    - stage:
+        name: test-verification
+        identifier: test_verification
+        description: Test cosign verification - PLATSRE-1652
+        template:
+          templateRef: rungenericmitigation
+          versionLabel: 2.0.0
+          templateInputs:
+            type: Custom
+            variables:
+              # Values are pinned LITERALS (not <+input>.default(...)) to match the deployed
+              # verification-test pipeline. Pinning also sidesteps a Harness parsing bug: a JSON
+              # passed via <+input>.default({...}) was TRUNCATED because the literal ".default"
+              # substring inside "redis-target.default.svc" collided with the .default(...)
+              # expression parser -- the 74-char JSON arrived as only its trailing 39 chars
+              # ("svc.cluster.local\",\"REDIS_PORT\":\"6379\"}"). A quoted literal is passed verbatim.
+              - name: image
+                type: String
+                # Mitigation image for the Run Mitigation Container step. That step runs the
+                # image's ENTRYPOINT (no command override), so the image MUST be
+                # v2.0.0-template-compatible: it needs the mitigation-entrypoint.sh wrapper baked
+                # in to decode MITIGATION_ENV_JSON into real env vars. redis-check:v1.0.0 predated
+                # the wrapper (built from the dir's first commit, c357ea8) -> its ENTRYPOINT
+                # exec'd redis-check.sh directly -> REDIS_HOST was never set. v2.0.0 is the
+                # rebuilt tag that INCLUDES the wrapper (added in 2448b50). Fully-qualified to the
+                # 547641909728 ECR host because the entrypoint resolver ignores the connector URL.
+                value: 547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/redis-check:v2.0.0
+              - name: image_fully_qualified
+                type: String
+                value: 018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2
+              - name: docker_connector
+                type: String
+                value: harnesspocdockerecr
+              - name: k8s_connector
+                type: String
+                value: harnesspoceks
+              # Quoted, escaped JSON literal so the value reaches MITIGATION_ENV_JSON intact (see
+              # the truncation note above). redis-check reads REDIS_HOST/REDIS_PORT; targets the
+              # POC's deployed redis-target backend for a real PING + SET/GET round-trip.
+              - name: env_json
+                type: String
+                value: "{\"REDIS_HOST\":\"redis-target.default.svc.cluster.local\",\"REDIS_PORT\":\"6379\"}"
+              - name: secret_identifier
+                type: String
+                value: harnessPocDbPasswordV2
+              - name: verifier_image
+                type: String
+                value: github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2
+              - name: verifier_connector
+                type: String
+                value: otkEcrBroker
+              - name: environment
+                type: String
+                value: prod

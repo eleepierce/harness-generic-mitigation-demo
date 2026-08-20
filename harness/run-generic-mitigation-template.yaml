@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: "2.0.0"
+  versionLabel: 2.0.0
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -17,6 +17,74 @@ template:
               steps:
                 - step:
                     type: Run
+                    name: Verify Image Signature
+                    identifier: Verify_Image_Signature
+                    timeout: 2m
+                    spec:
+                      connectorRef: <+stage.variables.verifier_connector>
+                      image: <+stage.variables.verifier_image>
+                      shell: Sh
+                      command: |-
+                        set -euo pipefail
+                        echo "Verifying image signature: <+stage.variables.image_fully_qualified>"
+
+                        # cosign reaches ECR with its OWN keychain, not the Harness connector.
+                        # The verifier image ships docker-credential-ecr-login but never
+                        # registers it, so cosign would authenticate anonymously and get 401.
+                        # Register the helper for the image's registry host here; it then uses
+                        # the delegate node role's ambient creds (IMDS) to fetch a token. Pull
+                        # is authorized by the admin-verifier ecr_policy.json node-role grant.
+                        REGISTRY_HOST=$(echo "<+stage.variables.image_fully_qualified>" | cut -d/ -f1)
+                        export DOCKER_CONFIG=/tmp/.docker
+                        mkdir -p "$DOCKER_CONFIG"
+                        printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
+
+                        cosign verify --insecure-ignore-tlog --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>
+                        echo "✓ Image signature verified successfully"
+                - step:
+                    type: Run
+                    name: Verify Branch Attestation
+                    identifier: Verify_Branch_Attestation
+                    timeout: 2m
+                    when:
+                      stageStatus: Success
+                      condition: <+stage.variables.environment> != "dev"
+                    spec:
+                      connectorRef: <+stage.variables.verifier_connector>
+                      image: <+stage.variables.verifier_image>
+                      shell: Sh
+                      command: |-
+                        set -euo pipefail
+                        echo "Verifying branch attestation for: <+stage.variables.image_fully_qualified>"
+
+                        # Register the ECR credential helper for cosign's keychain (see the
+                        # Verify Image Signature step for why this is needed).
+                        REGISTRY_HOST=$(echo "<+stage.variables.image_fully_qualified>" | cut -d/ -f1)
+                        export DOCKER_CONFIG=/tmp/.docker
+                        mkdir -p "$DOCKER_CONFIG"
+                        printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
+
+                        # Verify attestation and capture output
+                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>)
+
+                        # Extract branch from attestation. .predicate.Data is a stringified
+                        # JSON blob, so it must be re-parsed with a second jq (matches the
+                        # production verifier.sh) -- indexing .predicate.Data.branch directly
+                        # fails with "Cannot index string with string".
+                        BRANCH=$(echo "$ATTESTATION_OUTPUT" | jq -r '.payload' | base64 -d | jq -r '.predicate.Data' | jq -r '.branch')
+
+                        echo "Image was built from branch: $BRANCH"
+
+                        # Enforce main branch in non-dev environments
+                        if [ "$BRANCH" != "main" ]; then
+                          echo "Error: Image was built from non-main branch '$BRANCH'"
+                          echo "Non-main branch images can only be executed in dev environments"
+                          exit 1
+                        fi
+
+                        echo "✓ Branch attestation verified: main"
+                - step:
+                    type: Run
                     name: Run Mitigation Container
                     identifier: Run_Mitigation_Container
                     timeout: 5m
@@ -24,6 +92,15 @@ template:
                       connectorRef: <+stage.variables.docker_connector>
                       image: <+stage.variables.image>
                       shell: Sh
+                      # No command: the step runs the image's ENTRYPOINT, which is the
+                      # mitigation-entrypoint.sh wrapper. The wrapper decodes MITIGATION_ENV_JSON
+                      # into real env vars and substitutes the secret placeholder before exec'ing
+                      # the image's real check script -- this is what keeps the template
+                      # mitigation-agnostic (see the env_json variable description). The image
+                      # MUST carry that wrapper (v2.0.0-compatible); an image built before the
+                      # wrapper was added exec's its check script directly and never sees the
+                      # decoded vars (empirically: exit 127 "mitigation-entrypoint.sh: not found"
+                      # / REDIS_HOST unset). Verified green end-to-end with redis-check:v2.0.0.
                       envVariables:
                         MITIGATION_ENV_JSON: <+stage.variables.env_json>
                         MITIGATION_SECRET_VALUE: <+secrets.getValue(<+stage.variables.secret_identifier>)>
@@ -35,46 +112,46 @@ template:
     variables:
       - name: image
         type: String
-        description: "Full image reference for the blessed mitigation container"
+        description: Image reference relative to docker_connector's registry (used by the Run Mitigation Container step, which resolves it by prepending the connector's own registry host)
+        required: true
+        value: <+input>
+      - name: image_fully_qualified
+        type: String
+        description: The SAME image as 'image', but as a complete registry-qualified reference (e.g. 018537234677.dkr.ecr.us-east-1.amazonaws.com/github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2). Required separately because cosign has no concept of Harness connectors -- it parses this string directly as a standard OCI reference, so it needs the full host, not a connector-relative path.
         required: true
         value: <+input>
       - name: docker_connector
         type: String
-        description: "Identifier of the team's DockerRegistry connector for the mitigation image"
+        description: Identifier of the team's DockerRegistry connector for the mitigation image
         required: true
         value: <+input>
       - name: k8s_connector
         type: String
-        description: "Identifier of the team's K8sCluster connector (their delegate/cluster)"
+        description: Identifier of the team's K8sCluster connector (their delegate/cluster)
         required: true
         value: <+input>
       - name: env_json
         type: String
-        description: >-
-          JSON object of env vars the mitigation container needs, e.g.
-          {"TARGET_HOST": "...", "TARGET_PORT": "3306"} or {"REDIS_HOST": "...", "REDIS_PORT": "6379"}.
-          Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars
-          before the real check script runs - this is what makes the template genuinely
-          mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one
-          mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296).
-          For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a
-          substring in this JSON - confirmed empirically that it resolves to the literal string
-          "null" rather than the real value when nested inside a larger String-type variable this
-          way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying
-          lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put
-          the literal placeholder "__MITIGATION_SECRET__" at that key, e.g.
-          {"DB_PASSWORD": "__MITIGATION_SECRET__"}, and set secret_identifier below - the wrapper
-          substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var.
+        description: "JSON object of env vars the mitigation container needs, e.g. {\"TARGET_HOST\": \"...\", \"TARGET_PORT\": \"3306\"} or {\"REDIS_HOST\": \"...\", \"REDIS_PORT\": \"6379\"}. Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars before the real check script runs - this is what makes the template genuinely mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296). For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a substring in this JSON - confirmed empirically that it resolves to the literal string \"null\" rather than the real value when nested inside a larger String-type variable this way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put the literal placeholder \"__MITIGATION_SECRET__\" at that key, e.g. {\"DB_PASSWORD\": \"__MITIGATION_SECRET__\"}, and set secret_identifier below - the wrapper substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var."
         required: true
         value: <+input>
       - name: secret_identifier
         type: String
-        description: >-
-          Identifier of a Harness secret to make available to the container as
-          MITIGATION_SECRET_VALUE (resolved as this variable's whole value, the only way
-          getValue() resolves correctly here - see env_json's description). Required even for
-          mitigations with no real secret need - pass any existing, harmless secret identifier
-          in that case (its value is simply never referenced, since env_json won't contain the
-          "__MITIGATION_SECRET__" placeholder).
+        description: Identifier of a Harness secret to make available to the container as MITIGATION_SECRET_VALUE (resolved as this variable's whole value, the only way getValue() resolves correctly here - see env_json's description). Required even for mitigations with no real secret need - pass any existing, harmless secret identifier in that case (its value is simply never referenced, since env_json won't contain the "__MITIGATION_SECRET__" placeholder).
+        required: true
+        value: <+input>
+      - name: verifier_image
+        type: String
+        description: Container image used for signature verification. Must contain cosign, jq, and the trusted KMS public key baked in at /usr/local/share/cosign-public.key (the path the verify steps pass to cosign --key). The production admin-verifier image satisfies this - see generic-mitigation-scripts verifier.sh, which uses the same file. Passing the key via an env var was dropped in favour of the baked-in file because multi-line PEM values are mangled in transit through Harness String variables (PEM decoding failed).
+        required: true
+        value: <+input>
+      - name: verifier_connector
+        type: String
+        description: Identifier of the DockerRegistry connector for pulling the verifier image. Kept separate from docker_connector to decouple verification from team-supplied mitigation images.
+        required: true
+        value: <+input>
+      - name: environment
+        type: String
+        description: Environment name (e.g. 'dev', 'prod'). Branch attestation check is skipped when environment='dev', enforced otherwise.
         required: true
         value: <+input>
