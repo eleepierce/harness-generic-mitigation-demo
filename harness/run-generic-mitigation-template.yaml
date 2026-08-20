@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: 2.0.0
+  versionLabel: "2.1.0"
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -11,6 +11,97 @@ template:
     spec:
       execution:
         steps:
+          # --- Prod gate (PLATSRE-1653) -------------------------------------------------
+          # Runs on the delegate (no container/k8s infra) BEFORE the mitigation step group,
+          # so a blocked prod run fails here and the mitigation never executes. Mirrors SSM's
+          # dev-vs-prod distinction: prod requires a linked ticket_id (Jira key pattern, and
+          # optionally verified to exist via the Jira API); dev/stage pass straight through
+          # with no ticket required.
+          - step:
+              type: ShellScript
+              name: Prod Ticket Gate
+              identifier: Prod_Ticket_Gate
+              timeout: 2m
+              spec:
+                shell: Bash
+                onDelegate: true
+                source:
+                  type: Inline
+                  spec:
+                    script: |
+                      set -eu
+
+                      ENVIRONMENT="$(printf '%s' "${ENVIRONMENT:-}" | tr '[:upper:]' '[:lower:]')"
+                      TICKET_ID="${TICKET_ID:-}"
+
+                      case "$ENVIRONMENT" in
+                        prod|production|prd) IS_PROD=true ;;
+                        *)                   IS_PROD=false ;;
+                      esac
+
+                      if [ "$IS_PROD" != "true" ]; then
+                        echo "Environment '${ENVIRONMENT:-<unset>}' is non-prod - no ticket required, proceeding."
+                        exit 0
+                      fi
+
+                      # --- Prod: a linked ticket ID is mandatory. -----------------------
+                      if [ -z "$TICKET_ID" ]; then
+                        echo "BLOCKED: prod runs require a ticket_id (linked incident/Jira key). None provided." >&2
+                        exit 1
+                      fi
+
+                      # Must look like a Jira issue key: PROJECT-123 (uppercase project, digits).
+                      if ! printf '%s' "$TICKET_ID" | grep -Eq '^[A-Z][A-Z0-9]+-[0-9]+$'; then
+                        echo "BLOCKED: ticket_id '${TICKET_ID}' is not a valid Jira issue key (expected e.g. PLATSRE-1653)." >&2
+                        exit 1
+                      fi
+                      echo "ticket_id '${TICKET_ID}' matches the Jira issue-key pattern."
+
+                      # --- Optional: verify the ticket actually exists via the Jira API. -
+                      # Activates only when the delegate has both JIRA_BASE_URL and JIRA_TOKEN
+                      # in its environment (no Harness secret plumbing, so nothing to resolve
+                      # or fail on where it's not configured). Definitive 404 -> block; a
+                      # transport/5xx error falls back to pattern-only rather than blocking a
+                      # legitimate prod mitigation when Jira is unreachable.
+                      if [ -n "${JIRA_BASE_URL:-}" ] && [ -n "${JIRA_TOKEN:-}" ]; then
+                        if ! command -v curl >/dev/null 2>&1; then
+                          echo "Jira API verification requested but curl is unavailable - pattern check only."
+                        else
+                          URL="${JIRA_BASE_URL%/}/rest/api/2/issue/${TICKET_ID}?fields=key"
+                          CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
+                            -H "Authorization: Bearer ${JIRA_TOKEN}" \
+                            -H "Accept: application/json" \
+                            --max-time 10 "$URL")" || CODE="000"
+                          case "$CODE" in
+                            200)
+                              echo "Jira API confirms ${TICKET_ID} exists (HTTP 200)."
+                              ;;
+                            404)
+                              echo "BLOCKED: Jira API reports ${TICKET_ID} does not exist (HTTP 404)." >&2
+                              exit 1
+                              ;;
+                            401|403)
+                              echo "BLOCKED: Jira API rejected the credentials (HTTP ${CODE}) - cannot verify ${TICKET_ID}." >&2
+                              exit 1
+                              ;;
+                            *)
+                              echo "WARNING: Jira API check inconclusive (HTTP ${CODE}) - falling back to pattern-only for ${TICKET_ID}."
+                              ;;
+                          esac
+                        fi
+                      else
+                        echo "Jira API verification skipped (JIRA_BASE_URL/JIRA_TOKEN not set on delegate) - pattern check only."
+                      fi
+
+                      echo "Prod gate passed for ${TICKET_ID}."
+                environmentVariables:
+                  - name: ENVIRONMENT
+                    type: String
+                    value: <+stage.variables.environment>
+                  - name: TICKET_ID
+                    type: String
+                    value: <+stage.variables.ticket_id>
+                outputVariables: []
           - stepGroup:
               name: mitigation
               identifier: mitigation
@@ -152,6 +243,21 @@ template:
         value: <+input>
       - name: environment
         type: String
-        description: Environment name (e.g. 'dev', 'prod'). Branch attestation check is skipped when environment='dev', enforced otherwise.
+        description: >-
+          Target environment for this run (dev/stage/prod), sourced from the domain
+          manifest's topology.environments key by the fan-out orchestrator. Drives two
+          gates: (1) the Branch Attestation step is skipped when environment='dev' and
+          enforces main-branch images otherwise; (2) the Prod Ticket Gate step (PLATSRE-1653)
+          requires a valid ticket_id below when environment='prod'.
         required: true
-        value: <+input>
+        value: <+input>.allowedValues(dev,stage,prod)
+      - name: ticket_id
+        type: String
+        description: >-
+          Linked incident/Jira ticket key justifying a prod mitigation, e.g. PLATSRE-1653.
+          Required (and validated against the Jira issue-key pattern, optionally verified via
+          the Jira API) only when environment=prod - dev/stage runs may leave it empty. This
+          asymmetric requirement is enforced at runtime by the Prod Ticket Gate step rather
+          than by the schema, so non-prod runs are never prompted for it.
+        required: false
+        value: <+input>.default("")

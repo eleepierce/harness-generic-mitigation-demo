@@ -10,7 +10,7 @@ pipeline:
         identifier: mitigation
         template:
           templateRef: rungenericmitigation
-          versionLabel: "2.0.0"
+          versionLabel: "2.1.0"
           templateInputs:
             type: Custom
             variables:
@@ -35,6 +35,7 @@ pipeline:
               - name: secret_identifier
                 type: String
                 value: <+input>
+                # e.g. harnessPocDbPasswordV2
               - name: verifier_image
                 type: String
                 value: <+input>
@@ -44,3 +45,8 @@ pipeline:
               - name: environment
                 type: String
                 value: <+input>
+                # dev|stage|prod - prod runs are gated on ticket_id (PLATSRE-1653)
+              - name: ticket_id
+                type: String
+                value: <+input>
+                # Required only for environment=prod, e.g. PLATSRE-1653; leave empty for dev/stage
