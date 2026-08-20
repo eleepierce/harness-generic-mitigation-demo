@@ -11,7 +11,7 @@ template:
     spec:
       execution:
         steps:
-          # --- Prod gate (PLATSRE-1653) -------------------------------------------------
+          # --- Prod gate ---------------------------------------------------------------
           # Runs on the delegate (no container/k8s infra) BEFORE the mitigation step group,
           # so a blocked prod run fails here and the mitigation never executes. Mirrors SSM's
           # dev-vs-prod distinction: prod requires a linked ticket_id (Jira key pattern, and
@@ -52,7 +52,7 @@ template:
 
                       # Must look like a Jira issue key: PROJECT-123 (uppercase project, digits).
                       if ! printf '%s' "$TICKET_ID" | grep -Eq '^[A-Z][A-Z0-9]+-[0-9]+$'; then
-                        echo "BLOCKED: ticket_id '${TICKET_ID}' is not a valid Jira issue key (expected e.g. PLATSRE-1653)." >&2
+                        echo "BLOCKED: ticket_id '${TICKET_ID}' is not a valid Jira issue key (expected e.g. PROJECT-123)." >&2
                         exit 1
                       fi
                       echo "ticket_id '${TICKET_ID}' matches the Jira issue-key pattern."
@@ -223,7 +223,7 @@ template:
         value: <+input>
       - name: env_json
         type: String
-        description: "JSON object of env vars the mitigation container needs, e.g. {\"TARGET_HOST\": \"...\", \"TARGET_PORT\": \"3306\"} or {\"REDIS_HOST\": \"...\", \"REDIS_PORT\": \"6379\"}. Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars before the real check script runs - this is what makes the template genuinely mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296). For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a substring in this JSON - confirmed empirically that it resolves to the literal string \"null\" rather than the real value when nested inside a larger String-type variable this way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put the literal placeholder \"__MITIGATION_SECRET__\" at that key, e.g. {\"DB_PASSWORD\": \"__MITIGATION_SECRET__\"}, and set secret_identifier below - the wrapper substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var."
+        description: "JSON object of env vars the mitigation container needs, e.g. {\"TARGET_HOST\": \"...\", \"TARGET_PORT\": \"3306\"} or {\"REDIS_HOST\": \"...\", \"REDIS_PORT\": \"6379\"}. Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars before the real check script runs - this is what makes the template genuinely mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one mitigation type; v2.0.0 replaced them with this opaque contract). For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a substring in this JSON - confirmed empirically that it resolves to the literal string \"null\" rather than the real value when nested inside a larger String-type variable this way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put the literal placeholder \"__MITIGATION_SECRET__\" at that key, e.g. {\"DB_PASSWORD\": \"__MITIGATION_SECRET__\"}, and set secret_identifier below - the wrapper substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var."
         required: true
         value: <+input>
       - name: secret_identifier
@@ -247,14 +247,14 @@ template:
           Target environment for this run (dev/stage/prod), sourced from the domain
           manifest's topology.environments key by the fan-out orchestrator. Drives two
           gates: (1) the Branch Attestation step is skipped when environment='dev' and
-          enforces main-branch images otherwise; (2) the Prod Ticket Gate step (PLATSRE-1653)
+          enforces main-branch images otherwise; (2) the Prod Ticket Gate step
           requires a valid ticket_id below when environment='prod'.
         required: true
         value: <+input>.allowedValues(dev,stage,prod)
       - name: ticket_id
         type: String
         description: >-
-          Linked incident/Jira ticket key justifying a prod mitigation, e.g. PLATSRE-1653.
+          Linked incident/Jira ticket key justifying a prod mitigation, e.g. PROJECT-123.
           Required (and validated against the Jira issue-key pattern, optionally verified via
           the Jira API) only when environment=prod - dev/stage runs may leave it empty. This
           asymmetric requirement is enforced at runtime by the Prod Ticket Gate step rather

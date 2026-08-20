@@ -8,7 +8,7 @@ pipeline:
     - stage:
         name: test-verification
         identifier: test_verification
-        description: Test cosign verification - PLATSRE-1652
+        description: Test cosign verification
         template:
           templateRef: rungenericmitigation
           versionLabel: 2.0.0
