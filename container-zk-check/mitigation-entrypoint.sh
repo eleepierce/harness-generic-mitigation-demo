@@ -52,7 +52,12 @@ fi
 #
 # Non-fatal by construction: an observability nicety must never be able to stop the
 # actual mitigation from running, hence the `|| true`.
-_mitigation_script_name="${MITIGATION_SCRIPT_NAME:-$(basename "${1:-unknown}")}"
+# Strip the .sh extension so the derived service name reads as a name
+# ("generic-mitigation-redis-check") rather than a filename
+# ("generic-mitigation-redis-check.sh"). MITIGATION_SERVICE_NAME overrides the
+# whole thing where the image name and script name differ (container/ builds
+# connectivity-check but runs check.sh, for instance).
+_mitigation_script_name="${MITIGATION_SCRIPT_NAME:-$(basename "${1:-unknown}" .sh)}"
 _mitigation_service_name="${MITIGATION_SERVICE_NAME:-generic-mitigation-${_mitigation_script_name}}"
 
 jq -n -c \
