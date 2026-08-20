@@ -8,7 +8,7 @@
 # top-level ordered structures per environment, region is an attribute on the cell.
 #
 # Used by expand-domain-manifest.sh / domain-manifest-fanout-orchestrator.sh to prove the
-# fan-out wiring pattern (PLATSRE-1296 cellularization thread) against CND, ahead of DO's
+# fan-out wiring pattern (cellularization thread) against CND, ahead of DO's
 # OTK backport landing - see the "how to apply" note at the end of ssm_divergence_effort.md.
 apiVersion: cnd.twilio.io/v1alpha1
 kind: DomainManifest

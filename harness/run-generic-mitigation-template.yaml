@@ -1,7 +1,7 @@
 template:
   name: run-generic-mitigation
   identifier: rungenericmitigation
-  versionLabel: 2.0.0
+  versionLabel: 2.1.0
   type: Stage
   projectIdentifier: reliability_engineering
   orgIdentifier: cloudnativeplatform
@@ -11,6 +11,48 @@ template:
     spec:
       execution:
         steps:
+          # --- Ticket format check -------------------------------------------------------
+          # Runs on the delegate (no container/k8s infra) BEFORE the mitigation step group.
+          # Matches the real generic_mitigation_ssm tool exactly: ticket_id is optional in
+          # every environment (never required, regardless of prod/stage/dev) and is pure
+          # audit metadata, not a gate. If a value IS provided, its format is checked against
+          # the same three ID schemes the SSM tool accepts - a malformed value fails the same
+          # way SSM's own ValidationError would. No live existence check against Jira/
+          # FireHydrant/PagerDuty - SSM doesn't do that either, only format validation.
+          - step:
+              type: ShellScript
+              name: Ticket Format Check
+              identifier: Prod_Ticket_Gate
+              timeout: 2m
+              spec:
+                shell: Bash
+                onDelegate: true
+                source:
+                  type: Inline
+                  spec:
+                    script: |
+                      set -eu
+
+                      TICKET_ID="${TICKET_ID:-}"
+
+                      if [ -z "$TICKET_ID" ]; then
+                        echo "No ticket_id provided - proceeding (optional in every environment, matching SSM)."
+                        exit 0
+                      fi
+
+                      # Same three schemes generic_mitigation_ssm's validators.py accepts:
+                      # Jira key (any case), FireHydrant incident (inc-NNNNN), PagerDuty (pd-NNNNNNN).
+                      if ! printf '%s' "$TICKET_ID" | grep -Eqi '^([a-z]+-[0-9]+|inc-[0-9]{5}|pd-[0-9]{7})$'; then
+                        echo "BLOCKED: ticket_id '${TICKET_ID}' is not a Jira key, FireHydrant (inc-NNNNN), or PagerDuty (pd-NNNNNNN) ID." >&2
+                        exit 1
+                      fi
+
+                      echo "ticket_id '${TICKET_ID}' recorded for this run."
+                environmentVariables:
+                  - name: TICKET_ID
+                    type: String
+                    value: <+stage.variables.ticket_id>
+                outputVariables: []
           - stepGroup:
               name: mitigation
               identifier: mitigation
@@ -132,7 +174,7 @@ template:
         value: <+input>
       - name: env_json
         type: String
-        description: "JSON object of env vars the mitigation container needs, e.g. {\"TARGET_HOST\": \"...\", \"TARGET_PORT\": \"3306\"} or {\"REDIS_HOST\": \"...\", \"REDIS_PORT\": \"6379\"}. Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars before the real check script runs - this is what makes the template genuinely mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one mitigation type; v2.0.0 replaced them with this opaque contract, see PLATSRE-1296). For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a substring in this JSON - confirmed empirically that it resolves to the literal string \"null\" rather than the real value when nested inside a larger String-type variable this way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put the literal placeholder \"__MITIGATION_SECRET__\" at that key, e.g. {\"DB_PASSWORD\": \"__MITIGATION_SECRET__\"}, and set secret_identifier below - the wrapper substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var."
+        description: "JSON object of env vars the mitigation container needs, e.g. {\"TARGET_HOST\": \"...\", \"TARGET_PORT\": \"3306\"} or {\"REDIS_HOST\": \"...\", \"REDIS_PORT\": \"6379\"}. Decoded by the container's mitigation-entrypoint.sh wrapper into real exported env vars before the real check script runs - this is what makes the template genuinely mitigation-agnostic (v1.0.8's TARGET_HOST/DB_USER-shaped variables were specific to one mitigation type; v2.0.0 replaced them with this opaque contract). For a secret value (e.g. a DB password), do NOT embed <+secrets.getValue(...)> as a substring in this JSON - confirmed empirically that it resolves to the literal string \"null\" rather than the real value when nested inside a larger String-type variable this way (a distinct bug from v1.0.8's Secret-type-stage-variable issue, same underlying lesson: getValue() only resolves correctly as a variable's *entire* value). Instead, put the literal placeholder \"__MITIGATION_SECRET__\" at that key, e.g. {\"DB_PASSWORD\": \"__MITIGATION_SECRET__\"}, and set secret_identifier below - the wrapper substitutes it from the separately-resolved MITIGATION_SECRET_VALUE env var."
         required: true
         value: <+input>
       - name: secret_identifier
@@ -152,6 +194,22 @@ template:
         value: <+input>
       - name: environment
         type: String
-        description: Environment name (e.g. 'dev', 'prod'). Branch attestation check is skipped when environment='dev', enforced otherwise.
+        description: >-
+          Target environment for this run (dev/stage/prod), sourced from the domain
+          manifest's topology.environments key by the fan-out orchestrator. The Branch
+          Attestation step is skipped when environment='dev' and enforces main-branch
+          images otherwise. Unrelated to ticket_id below - matching SSM, ticket_id is
+          optional in every environment, not just non-prod.
         required: true
+        value: <+input>.allowedValues(dev,stage,prod)
+      - name: ticket_id
+        type: String
+        description: >-
+          Linked incident/Jira ticket key, e.g. PROJECT-123, inc-12345 (FireHydrant), or
+          pd-1234567 (PagerDuty). Always optional, in every environment - matches the real
+          generic_mitigation_ssm tool, where this is audit metadata rather than a
+          requirement. If provided, the Ticket Format Check step validates it matches one
+          of those three ID schemes (format only, no live existence check) and fails the
+          run the same way SSM's own validator would on a malformed value.
+        required: false
         value: <+input>
