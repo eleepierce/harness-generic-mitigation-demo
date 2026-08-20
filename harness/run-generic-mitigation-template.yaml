@@ -146,6 +146,16 @@ template:
                       envVariables:
                         MITIGATION_ENV_JSON: <+stage.variables.env_json>
                         MITIGATION_SECRET_VALUE: <+secrets.getValue(<+stage.variables.secret_identifier>)>
+                        # Consumed only by mitigation-entrypoint.sh's invocation-marker
+                        # line (see that script's comment for the full mechanism). They
+                        # make the marker carry the incident/env context, so a Springer
+                        # query can answer "which mitigations ran, for what, where" and
+                        # not just "one ran". Passed as their own env vars rather than
+                        # folded into env_json so they can't collide with a mitigation's
+                        # own variable names, and so a mitigation script never has to
+                        # know they exist.
+                        MITIGATION_TICKET_ID: <+stage.variables.ticket_id>
+                        MITIGATION_ENVIRONMENT: <+stage.variables.environment>
               stepGroupInfra:
                 type: KubernetesDirect
                 spec:

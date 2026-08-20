@@ -28,4 +28,41 @@ if [ -n "${MITIGATION_SECRET_VALUE:-}" ]; then
   done
 fi
 
+# --- Invocation marker -------------------------------------------------------
+# One structured JSON line, emitted before the real check script runs so it exists
+# even if that script then fails. Purpose: fleet-wide "when was a generic mitigation
+# invoked" tracking in Springer, across platforms, off a single field.
+#
+# For logs ingested through the CloudWatch pipeline (the paved CND path: ECS awslogs
+# driver -> CloudWatch -> Firehose -> telemetry gateway), the gateway's
+# transform/promote_service_name processor lifts a `service.name` field out of a
+# structured JSON body into the resource attributes, overriding whatever the log
+# group name would otherwise imply. Precedence is: JSON body > log-group-name regex
+# > unknown_service. That puts it in ClickHouse's *indexed* ServiceName column, so
+#   WHERE ServiceName LIKE 'generic-mitigation%'
+# finds every invocation with no collector-side config and no per-account plumbing
+# beyond the telemetry-gateway-iac allowlist. This deliberately mirrors how ABBA's
+# own filelog/ssm receiver hardcodes service.name=ssm for the SSM path, so both
+# platforms are reachable from the same field rather than two bespoke ones.
+#
+# On paths that are NOT CloudWatch-ingested (OTK container tailing, AL23 filelog)
+# the promotion does not happen -- there service.name has to come from an annotation,
+# env var or pod label instead. The line is still emitted and still greppable in the
+# log body there, it just isn't promoted to a resource attribute.
+#
+# Non-fatal by construction: an observability nicety must never be able to stop the
+# actual mitigation from running, hence the `|| true`.
+_mitigation_script_name="${MITIGATION_SCRIPT_NAME:-$(basename "${1:-unknown}")}"
+_mitigation_service_name="${MITIGATION_SERVICE_NAME:-generic-mitigation-${_mitigation_script_name}}"
+
+jq -n -c \
+  --arg service_name "$_mitigation_service_name" \
+  --arg script "$_mitigation_script_name" \
+  --arg ticket "${MITIGATION_TICKET_ID:-}" \
+  --arg environment "${MITIGATION_ENVIRONMENT:-}" \
+  '{"service.name": $service_name, "mitigation.invoked": true, "mitigation.script": $script}
+   + (if $ticket == "" then {} else {"mitigation.ticket": $ticket} end)
+   + (if $environment == "" then {} else {"mitigation.environment": $environment} end)' \
+  || true
+
 exec "$@"
