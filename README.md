@@ -4,22 +4,21 @@ POC for Harness as a mitigation invocation front door.
 
 **Full write-up:** [Harness Generic Mitigation for CND POC](https://docs.google.com/document/d/1rZVuQRlsCdRgplfoHaljRKBsqKHatkQCDSffJmJSWNE/edit)
 
-## Layout
+## Ticket format check
 
-## Prod gate
-
-`run-generic-mitigation` v2.1.0 adds a `Prod Ticket Gate` step that runs on the delegate
+`run-generic-mitigation` v2.1.0 adds a `Ticket Format Check` step that runs on the delegate
 before the mitigation step group. It takes two new stage variables:
 
 - `environment` (required, `dev`/`stage`/`prod`) — sourced from the domain manifest by the
-  fan-out orchestrator.
-- `ticket_id` (optional) — a linked incident/Jira key, e.g. `PROJECT-123`.
+  fan-out orchestrator. Unrelated to `ticket_id` below.
+- `ticket_id` (optional, every environment) — a linked incident ID, e.g. `PROJECT-123`
+  (Jira), `inc-12345` (FireHydrant), or `pd-1234567` (PagerDuty).
 
-For `environment=prod` a `ticket_id` matching the Jira issue-key pattern (`PROJECT-123`) is
-required, or the run fails before the mitigation container executes. If the delegate has
-`JIRA_BASE_URL` + `JIRA_TOKEN` set, the ticket is additionally verified to exist via the Jira
-API (definitive 404/401/403 blocks; transport errors fall back to pattern-only). `dev`/`stage`
-runs need no ticket — matching SSM's dev-vs-prod distinction.
+`ticket_id` is never required, in any environment — matching the real `generic_mitigation_ssm`
+tool, where it's audit metadata rather than a gate. If a value is provided, it must match one
+of those three ID schemes or the run fails before the mitigation container executes; no live
+existence check against Jira/FireHydrant/PagerDuty is performed, again matching SSM (format
+validation only).
 
 ## Layout
 

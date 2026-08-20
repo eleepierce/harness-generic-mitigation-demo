@@ -45,8 +45,8 @@ pipeline:
               - name: environment
                 type: String
                 value: <+input>
-                # dev|stage|prod - prod runs are gated on ticket_id
+                # dev|stage|prod - unrelated to ticket_id
               - name: ticket_id
                 type: String
                 value: <+input>
-                # Required only for environment=prod; leave empty for dev/stage
+                # Always optional, matching SSM; format-checked (Jira/inc-/pd-) if provided
