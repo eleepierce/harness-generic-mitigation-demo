@@ -81,8 +81,23 @@ template:
                         mkdir -p "$DOCKER_CONFIG"
                         printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
 
-                        cosign verify --insecure-ignore-tlog --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>
+                        # Trust anchor. Default is the KMS public key baked into the verifier
+                        # image. cosign_public_key_b64 overrides it, base64-encoded on purpose:
+                        # a multi-line PEM passed through a Harness String variable arrives with
+                        # its -----BEGIN/END----- armor stripped and newlines flattened to spaces
+                        # (confirmed empirically). Base64 is single-line, so nothing mangles it,
+                        # and it avoids rebuilding the verifier image to change trust anchors.
+                        KEYFILE=/usr/local/share/cosign-public.key
+                        if [ -n "${COSIGN_PUBLIC_KEY_B64:-}" ]; then
+                          echo "$COSIGN_PUBLIC_KEY_B64" | base64 -d > /tmp/cosign-verify.pub
+                          KEYFILE=/tmp/cosign-verify.pub
+                          echo "using cosign_public_key_b64 override as trust anchor"
+                        fi
+
+                        cosign verify --insecure-ignore-tlog --key "$KEYFILE" <+stage.variables.image_fully_qualified>
                         echo "✓ Image signature verified successfully"
+                      envVariables:
+                        COSIGN_PUBLIC_KEY_B64: <+stage.variables.cosign_public_key_b64>
                 - step:
                     type: Run
                     name: Verify Branch Attestation
@@ -107,7 +122,13 @@ template:
                         printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
 
                         # Verify attestation and capture output
-                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key /usr/local/share/cosign-public.key <+stage.variables.image_fully_qualified>)
+                        KEYFILE=/usr/local/share/cosign-public.key
+                        if [ -n "${COSIGN_PUBLIC_KEY_B64:-}" ]; then
+                          echo "$COSIGN_PUBLIC_KEY_B64" | base64 -d > /tmp/cosign-verify.pub
+                          KEYFILE=/tmp/cosign-verify.pub
+                        fi
+
+                        ATTESTATION_OUTPUT=$(cosign verify-attestation --insecure-ignore-tlog --type custom --key "$KEYFILE" <+stage.variables.image_fully_qualified>)
 
                         # Extract branch from attestation. .predicate.Data is a stringified
                         # JSON blob, so it must be re-parsed with a second jq (matches the
@@ -125,6 +146,8 @@ template:
                         fi
 
                         echo "✓ Branch attestation verified: main"
+                      envVariables:
+                        COSIGN_PUBLIC_KEY_B64: <+stage.variables.cosign_public_key_b64>
                 - step:
                     type: Run
                     name: Run Mitigation Container
@@ -236,5 +259,17 @@ template:
           than on it, so its host attributes describe the executor and the target has to
           be supplied here or it is absent from the telemetry entirely. Optional -- omit
           it and the field is simply left out of the marker.
+        required: false
+        value: <+input>.default("")
+      - name: cosign_public_key_b64
+        type: String
+        description: >-
+          Optional override for the cosign trust anchor: the verifying PUBLIC key as a
+          single-line base64-encoded PEM. Leave empty to use the KMS public key baked into
+          the verifier image at /usr/local/share/cosign-public.key, which is the production
+          trust anchor. Base64 rather than raw PEM because a multi-line PEM passed through a
+          Harness String variable arrives with its armor stripped and newlines flattened to
+          spaces - confirmed empirically. Produce it with:
+          cosign public-key --key awskms:///<key-arn> | base64 | tr -d '\n'
         required: false
         value: <+input>.default("")
