@@ -13,6 +13,21 @@
 # Usage in a Dockerfile: ENTRYPOINT ["/usr/local/bin/mitigation-entrypoint.sh", "/usr/local/bin/<real-check-script>"]
 set -eu
 
+# MITIGATION_ENV_JSON_B64 is the same JSON, base64-encoded, and takes precedence.
+# It exists because the ECS execution path (org.run_ecs_container_stepgroup) passes env
+# vars as a single comma-separated KEY=VALUE string, which its CLI splits on commas
+# before splitting each pair on the FIRST "=" only (cli/pipelineutils/runecscontainer.go,
+# strings.SplitN(env, "=", 2)). Raw JSON contains commas, so it either hard-errors in the
+# CSV reader or silently truncates at the first comma - the silent case being the
+# dangerous one. Base64 has no commas, and because the split is on the first "=" only,
+# its "=" padding survives intact (verified). So on ECS, pass MITIGATION_ENV_JSON_B64;
+# on Kubernetes, where env vars are structured and this problem doesn't exist, either
+# works and MITIGATION_ENV_JSON stays the simpler choice.
+if [ -n "${MITIGATION_ENV_JSON_B64:-}" ]; then
+  MITIGATION_ENV_JSON="$(printf '%s' "$MITIGATION_ENV_JSON_B64" | base64 -d)"
+  export MITIGATION_ENV_JSON
+fi
+
 if [ -n "${MITIGATION_ENV_JSON:-}" ]; then
   eval "$(echo "$MITIGATION_ENV_JSON" | jq -r 'to_entries | map("export \(.key)=\(.value|@sh)") | .[]')"
 fi
