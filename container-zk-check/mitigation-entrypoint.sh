@@ -75,14 +75,37 @@ fi
 _mitigation_script_name="${MITIGATION_SCRIPT_NAME:-$(basename "${1:-unknown}" .sh)}"
 _mitigation_service_name="${MITIGATION_SERVICE_NAME:-generic-mitigation-${_mitigation_script_name}}"
 
+# com.twilio.role identifies WHAT THE MITIGATION RAN AGAINST, and deliberately reuses
+# the attribute name the SSM/ABBA path already carries, so one query shape works on
+# both platforms:
+#
+#   ABBA:    ResourceAttributes['com.twilio.role']   (e.g. "crontroller-tx")
+#   Harness: LogAttributes['com.twilio.role']
+#
+# On ABBA this comes for free: the SSM document runs ON the target host, so the
+# host-level collector's resource detection stamps the target's own identity
+# (com.twilio.role from the platform:role tag, plus host.id/host.name/realm/env)
+# onto every line. That is the same role `owl generic-mitigation-ssm --role` targets.
+#
+# Harness has no equivalent, because the mitigation container runs BESIDE the target
+# -- on a shared cluster or a Fargate task -- so its host attributes describe the
+# executor, not the target. The target identity therefore has to be passed in
+# explicitly or it does not exist anywhere in the telemetry. Hence this variable.
+#
+# It lands in log attributes rather than resource attributes on the CloudWatch path,
+# since service.name is the only field the gateway promotes out of a JSON body. That
+# is fine for the intended use (counting invocations, filtering by target) and is not
+# worth spending service.name on -- service.name identifies which mitigation ran.
 jq -n -c \
   --arg service_name "$_mitigation_service_name" \
   --arg script "$_mitigation_script_name" \
   --arg ticket "${MITIGATION_TICKET_ID:-}" \
   --arg environment "${MITIGATION_ENVIRONMENT:-}" \
+  --arg role "${MITIGATION_TARGET_ROLE:-}" \
   '{"service.name": $service_name, "mitigation.invoked": true, "mitigation.script": $script}
    + (if $ticket == "" then {} else {"mitigation.ticket": $ticket} end)
-   + (if $environment == "" then {} else {"mitigation.environment": $environment} end)' \
+   + (if $environment == "" then {} else {"mitigation.environment": $environment} end)
+   + (if $role == "" then {} else {"com.twilio.role": $role} end)' \
   || true
 
 exec "$@"

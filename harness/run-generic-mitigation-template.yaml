@@ -156,6 +156,7 @@ template:
                         # know they exist.
                         MITIGATION_TICKET_ID: <+stage.variables.ticket_id>
                         MITIGATION_ENVIRONMENT: <+stage.variables.environment>
+                        MITIGATION_TARGET_ROLE: <+stage.variables.target_role>
               stepGroupInfra:
                 type: KubernetesDirect
                 spec:
@@ -223,3 +224,17 @@ template:
           run the same way SSM's own validator would on a malformed value.
         required: false
         value: <+input>
+      - name: target_role
+        type: String
+        description: >-
+          What this mitigation is being run AGAINST -- the target service/role, e.g.
+          "crontroller-tx". Emitted by the entrypoint wrapper as com.twilio.role,
+          deliberately reusing the attribute name the SSM/ABBA path already carries so a
+          single query shape works on both platforms. On ABBA this is free: the SSM
+          document runs on the target host, so resource detection stamps the host's own
+          platform:role tag onto every log line. Harness runs beside the target rather
+          than on it, so its host attributes describe the executor and the target has to
+          be supplied here or it is absent from the telemetry entirely. Optional -- omit
+          it and the field is simply left out of the marker.
+        required: false
+        value: <+input>.default("")
