@@ -1,0 +1,289 @@
+pipeline:
+  name: ecs-launcher-proto
+  identifier: ecslauncherproto
+  projectIdentifier: reliability_engineering
+  orgIdentifier: cloudnativeplatform
+  tags: {}
+  description: >-
+    Self-contained replacement for DO's org.run_ecs_container_stepgroup. Launches a short-lived
+    ECS Fargate mitigation task from a Kubernetes container Run step using only the AWS CLI, so it
+    does not depend on /opt/harness-delegate/client-tools/harness-lib.sh (absent on a
+    self-installed delegate). Also uses a STABLE CloudWatch log group that is never deleted, so
+    CloudWatch -> Springer forwarding can actually work.
+  stages:
+    - stage:
+        name: ecs-launcher
+        identifier: ecslauncher
+        type: Custom
+        tags: {}
+        spec:
+          execution:
+            steps:
+              - stepGroup:
+                  name: ecs-launcher
+                  identifier: ecslaunchergroup
+                  stepGroupInfra:
+                    type: KubernetesDirect
+                    spec:
+                      connectorRef: harnesspoceks
+                      namespace: default
+                  steps:
+                    - step:
+                        type: Run
+                        name: Launch ECS Mitigation Task
+                        identifier: Launch_ECS_Mitigation_Task
+                        timeout: 15m
+                        spec:
+                          connectorRef: otkEcrBroker
+                          image: 018537234677.dkr.ecr.us-east-1.amazonaws.com/docker.io/amazon/aws-cli:2.13.33
+                          shell: Sh
+                          envVariables:
+                            AWS_REGION: us-east-1
+                            AWS_DEFAULT_REGION: us-east-1
+                          command: |-
+                            # ------------------------------------------------------------------
+                            # Self-contained ECS Fargate mitigation launcher.
+                            # Replaces DO's org.run_ecs_container_stepgroup (which sources
+                            # /opt/harness-delegate/client-tools/harness-lib.sh - not present on a
+                            # self-installed delegate). Pure AWS CLI, no jq, no delegate libs.
+                            # ------------------------------------------------------------------
+                            set -u
+
+                            REGION=us-east-1
+                            CLUSTER=harness-poc-mitigation
+                            FAMILY=harness-poc-redis-check
+                            CONTAINER_NAME=mitigation
+                            IMAGE=547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/redis-check:v2.2.0
+                            ROLE_ARN=arn:aws:iam::547641909728:role/cnd-eleepierce-sandbox-harness-role
+                            SUBNETS=subnet-0e03fe41c740515df,subnet-0a53a43b9278b1b7b
+                            SECURITY_GROUP=sg-04ac82eeae54cd226
+                            # STABLE log group, deliberately never deleted: /ecs/<cluster>/<service>
+                            # shape matches the Springer gateway log-group regex, and it persists so
+                            # CloudWatch -> Springer forwarding is actually possible. DO's version
+                            # uses a per-run ephemeral group and deletes it, which makes that
+                            # impossible.
+                            LOG_GROUP=/ecs/harness-poc-mitigation/redis-check
+                            LOG_RETENTION_DAYS=1
+                            STREAM_PREFIX=ecs
+                            FAIL_MODE=<+pipeline.variables.fail_mode>
+                            POLL_INTERVAL=10
+                            POLL_MAX_SECONDS=300
+                            LOG_WAIT_MAX_SECONDS=90
+
+                            TASK_DEF_ARN=""
+                            TASK_ARN=""
+
+                            log() { echo "[ecs-launcher] $*"; }
+
+                            cleanup() {
+                              if [ -n "$TASK_DEF_ARN" ]; then
+                                log "deregistering task definition $TASK_DEF_ARN"
+                                aws ecs deregister-task-definition \
+                                  --region "$REGION" \
+                                  --task-definition "$TASK_DEF_ARN" \
+                                  --query 'taskDefinition.status' --output text \
+                                  || log "WARN: deregister failed (non-fatal)"
+                              fi
+                              log "log group $LOG_GROUP intentionally NOT deleted"
+                            }
+
+                            die() {
+                              log "FATAL: $*"
+                              cleanup
+                              exit 1
+                            }
+
+                            log "aws cli: $(aws --version 2>&1)"
+                            log "caller identity:"
+                            aws sts get-caller-identity --region "$REGION" --output text \
+                              || die "no usable AWS credentials in this pod"
+
+                            # ---------- 1. stable log group + retention ----------
+                            log "ensuring log group $LOG_GROUP"
+                            EXISTING=$(aws logs describe-log-groups \
+                              --region "$REGION" \
+                              --log-group-name-prefix "$LOG_GROUP" \
+                              --query "logGroups[?logGroupName=='$LOG_GROUP'].logGroupName | [0]" \
+                              --output text 2>/dev/null)
+                            if [ "$EXISTING" = "$LOG_GROUP" ]; then
+                              log "log group already exists (reused, not recreated)"
+                            else
+                              aws logs create-log-group --region "$REGION" --log-group-name "$LOG_GROUP" \
+                                || die "could not create log group $LOG_GROUP"
+                              log "log group created"
+                            fi
+                            aws logs put-retention-policy \
+                              --region "$REGION" \
+                              --log-group-name "$LOG_GROUP" \
+                              --retention-in-days "$LOG_RETENTION_DAYS" \
+                              || die "could not set retention on $LOG_GROUP"
+                            log "retention set to $LOG_RETENTION_DAYS day(s)"
+
+                            # ---------- 2. register task definition ----------
+                            # Container contract: ENTRYPOINT is baked into the image
+                            # (mitigation-entrypoint.sh -> redis-check.sh). Deliberately no
+                            # entryPoint and no command override - config travels only as env vars.
+                            ENV_JSON='{"REDIS_HOST":"redis-target.default.svc.cluster.local","REDIS_PORT":"6379"}'
+                            ENV_B64=$(printf '%s' "$ENV_JSON" | base64 | tr -d '\n')
+                            log "MITIGATION_ENV_JSON_B64=$ENV_B64"
+
+                            cat > /tmp/taskdef.json <<TASKDEF
+                            {
+                              "family": "$FAMILY",
+                              "networkMode": "awsvpc",
+                              "requiresCompatibilities": ["FARGATE"],
+                              "cpu": "512",
+                              "memory": "1024",
+                              "executionRoleArn": "$ROLE_ARN",
+                              "taskRoleArn": "$ROLE_ARN",
+                              "containerDefinitions": [
+                                {
+                                  "name": "$CONTAINER_NAME",
+                                  "image": "$IMAGE",
+                                  "essential": true,
+                                  "environment": [
+                                    {"name": "MITIGATION_ENV_JSON_B64", "value": "$ENV_B64"},
+                                    {"name": "MITIGATION_TICKET_ID", "value": "PLATSRE-1796"},
+                                    {"name": "MITIGATION_ENVIRONMENT", "value": "prod"}
+                                  ],
+                                  "logConfiguration": {
+                                    "logDriver": "awslogs",
+                                    "options": {
+                                      "awslogs-group": "$LOG_GROUP",
+                                      "awslogs-region": "$REGION",
+                                      "awslogs-stream-prefix": "$STREAM_PREFIX"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                            TASKDEF
+
+                            log "registering task definition for family $FAMILY"
+                            TASK_DEF_ARN=$(aws ecs register-task-definition \
+                              --region "$REGION" \
+                              --cli-input-json file:///tmp/taskdef.json \
+                              --query 'taskDefinition.taskDefinitionArn' --output text)
+                            if [ -z "$TASK_DEF_ARN" ] || [ "$TASK_DEF_ARN" = "None" ]; then
+                              TASK_DEF_ARN=""
+                              die "register-task-definition returned no ARN"
+                            fi
+                            log "registered $TASK_DEF_ARN"
+
+                            # ---------- 3. run-task ----------
+                            log "running task on cluster $CLUSTER"
+                            aws ecs run-task \
+                              --region "$REGION" \
+                              --cluster "$CLUSTER" \
+                              --task-definition "$TASK_DEF_ARN" \
+                              --launch-type FARGATE \
+                              --count 1 \
+                              --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUP],assignPublicIp=DISABLED}" \
+                              --output json > /tmp/runtask.json 2> /tmp/runtask.err
+                            if [ $? -ne 0 ]; then
+                              log "run-task stderr:"
+                              cat /tmp/runtask.err
+                              die "run-task call failed"
+                            fi
+
+                            # No jq in this image, and JMESPath --query only applies to live API
+                            # responses, so extract the ARN from the saved JSON with grep/sed.
+                            TASK_ARN=$(grep -o '"taskArn"[[:space:]]*:[[:space:]]*"[^"]*"' /tmp/runtask.json \
+                              | head -1 | sed 's/.*"\(arn:[^"]*\)"[[:space:]]*$/\1/')
+                            if [ -z "$TASK_ARN" ]; then
+                              log "run-task response:"
+                              cat /tmp/runtask.json
+                              die "could not determine task ARN (check failures[] above)"
+                            fi
+                            TASK_ID=$(basename "$TASK_ARN")
+                            log "task ARN: $TASK_ARN"
+                            log "task id:  $TASK_ID"
+
+                            # ---------- 4. bounded poll until STOPPED ----------
+                            log "polling describe-tasks until STOPPED (max ${POLL_MAX_SECONDS}s)"
+                            WAITED=0
+                            LAST_STATUS=""
+                            until [ "$LAST_STATUS" = "STOPPED" ] || [ "$WAITED" -ge "$POLL_MAX_SECONDS" ]; do
+                              sleep "$POLL_INTERVAL"
+                              WAITED=$((WAITED + POLL_INTERVAL))
+                              LAST_STATUS=$(aws ecs describe-tasks \
+                                --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+                                --query 'tasks[0].lastStatus' --output text 2>/dev/null)
+                              log "  t=${WAITED}s lastStatus=$LAST_STATUS"
+                            done
+
+                            if [ "$LAST_STATUS" != "STOPPED" ]; then
+                              log "stopping runaway task"
+                              aws ecs stop-task --region "$REGION" --cluster "$CLUSTER" --task "$TASK_ARN" \
+                                --reason "harness step poll timeout" --query 'task.taskArn' --output text \
+                                || log "WARN: stop-task failed"
+                              die "task did not reach STOPPED within ${POLL_MAX_SECONDS}s (last=$LAST_STATUS)"
+                            fi
+
+                            STOPPED_REASON=$(aws ecs describe-tasks \
+                              --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+                              --query 'tasks[0].stoppedReason' --output text 2>/dev/null)
+                            log "task STOPPED; stoppedReason=$STOPPED_REASON"
+
+                            # ---------- 5. fetch container logs ----------
+                            LOG_STREAM="$STREAM_PREFIX/$CONTAINER_NAME/$TASK_ID"
+                            log "fetching CloudWatch logs from $LOG_GROUP :: $LOG_STREAM"
+                            LOG_WAITED=0
+                            LOG_LINES=""
+                            until [ -n "$LOG_LINES" ] || [ "$LOG_WAITED" -ge "$LOG_WAIT_MAX_SECONDS" ]; do
+                              LOG_LINES=$(aws logs get-log-events \
+                                --region "$REGION" \
+                                --log-group-name "$LOG_GROUP" \
+                                --log-stream-name "$LOG_STREAM" \
+                                --start-from-head \
+                                --query 'events[*].[message]' --output text 2>/dev/null)
+                              if [ -n "$LOG_LINES" ]; then break; fi
+                              sleep 10
+                              LOG_WAITED=$((LOG_WAITED + 10))
+                              log "  waiting for log delivery (${LOG_WAITED}s)"
+                            done
+
+                            echo "=================== CONTAINER STDOUT BEGIN ==================="
+                            if [ -n "$LOG_LINES" ]; then
+                              echo "$LOG_LINES"
+                            else
+                              echo "(no log events found in $LOG_GROUP :: $LOG_STREAM)"
+                            fi
+                            echo "==================== CONTAINER STDOUT END ===================="
+
+                            # ---------- 6. exit code + FAIL_MODE ----------
+                            EXIT_CODE=$(aws ecs describe-tasks \
+                              --region "$REGION" --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+                              --query "tasks[0].containers[?name=='$CONTAINER_NAME'].exitCode | [0]" \
+                              --output text 2>/dev/null)
+                            log "container '$CONTAINER_NAME' exitCode=$EXIT_CODE"
+
+                            # ---------- 7. deregister task def, keep log group ----------
+                            cleanup
+
+                            log "SUMMARY task=$TASK_ID exit_code=$EXIT_CODE fail_mode=$FAIL_MODE log_group=$LOG_GROUP log_stream=$LOG_STREAM"
+
+                            if [ "$EXIT_CODE" = "0" ]; then
+                              log "RESULT: container exit code 0 -> step PASSES"
+                              exit 0
+                            fi
+                            if [ "$EXIT_CODE" = "None" ] || [ -z "$EXIT_CODE" ]; then
+                              log "RESULT: no container exit code reported (treated as failure)"
+                              EXIT_CODE="unknown"
+                            fi
+                            if [ "$FAIL_MODE" = "OPEN" ]; then
+                              log "RESULT: FAIL_MODE=OPEN -> container exit code $EXIT_CODE reported but step PASSES"
+                              exit 0
+                            fi
+                            log "RESULT: FAIL_MODE=CLOSE and container exit code $EXIT_CODE != 0 -> step FAILS (this is the correct, intended propagation)"
+                            exit 1
+        failureStrategies: []
+  variables:
+    - name: fail_mode
+      type: String
+      description: >-
+        CLOSE (default) = the step fails when the mitigation container's exit code is non-zero,
+        i.e. the container's result is propagated to the pipeline. OPEN = the exit code is
+        reported but the step still passes. Mirrors DO's FAIL_MODE knob.
+      required: false
+      value: <+input>.default(CLOSE)
