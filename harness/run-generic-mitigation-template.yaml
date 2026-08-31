@@ -13,12 +13,13 @@ template:
         steps:
           # --- Ticket format check -------------------------------------------------------
           # Runs on the delegate (no container/k8s infra) BEFORE the mitigation step group.
-          # Matches the real generic_mitigation_ssm tool exactly: ticket_id is optional in
-          # every environment (never required, regardless of prod/stage/dev) and is pure
-          # audit metadata, not a gate. If a value IS provided, its format is checked against
-          # the same three ID schemes the SSM tool accepts - a malformed value fails the same
-          # way SSM's own ValidationError would. No live existence check against Jira/
-          # FireHydrant/PagerDuty - SSM doesn't do that either, only format validation.
+          # Matches the real generic_mitigation_ssm tool exactly: the underlying SSM document
+          # (validate-run-docker-image.yaml's validate_ticket()) requires a ticket only when
+          # environment == prod; every other environment treats it as optional audit metadata.
+          # If a value IS provided (required or not), its format is checked against the same
+          # three ID schemes the SSM tool accepts - a malformed value fails the same way SSM's
+          # own ValidationError would. No live existence check against Jira/FireHydrant/
+          # PagerDuty - SSM doesn't do that either, only format validation.
           - step:
               type: ShellScript
               name: Ticket Format Check
@@ -34,9 +35,14 @@ template:
                       set -eu
 
                       TICKET_ID="${TICKET_ID:-}"
+                      ENVIRONMENT="${ENVIRONMENT:-}"
 
                       if [ -z "$TICKET_ID" ]; then
-                        echo "No ticket_id provided - proceeding (optional in every environment, matching SSM)."
+                        if [ "$ENVIRONMENT" = "prod" ]; then
+                          echo "BLOCKED: ticket_id is required when running in the prod environment." >&2
+                          exit 1
+                        fi
+                        echo "No ticket_id provided - proceeding (optional outside prod, matching SSM)."
                         exit 0
                       fi
 
@@ -52,6 +58,9 @@ template:
                   - name: TICKET_ID
                     type: String
                     value: <+stage.variables.ticket_id>
+                  - name: ENVIRONMENT
+                    type: String
+                    value: <+stage.variables.environment>
                 outputVariables: []
           - stepGroup:
               name: mitigation
@@ -232,19 +241,19 @@ template:
           Target environment for this run (dev/stage/prod), sourced from the domain
           manifest's topology.environments key by the fan-out orchestrator. The Branch
           Attestation step is skipped when environment='dev' and enforces main-branch
-          images otherwise. Unrelated to ticket_id below - matching SSM, ticket_id is
-          optional in every environment, not just non-prod.
+          images otherwise. Also read by the Ticket Format Check step below - matching
+          SSM, ticket_id is required when environment=prod and optional otherwise.
         required: true
         value: <+input>.allowedValues(dev,stage,prod)
       - name: ticket_id
         type: String
         description: >-
           Linked incident/Jira ticket key, e.g. PROJECT-123, inc-12345 (FireHydrant), or
-          pd-1234567 (PagerDuty). Always optional, in every environment - matches the real
-          generic_mitigation_ssm tool, where this is audit metadata rather than a
-          requirement. If provided, the Ticket Format Check step validates it matches one
-          of those three ID schemes (format only, no live existence check) and fails the
-          run the same way SSM's own validator would on a malformed value.
+          pd-1234567 (PagerDuty). Matches the real generic_mitigation_ssm tool: required
+          when environment=prod, optional otherwise. If provided (required or not), the
+          Ticket Format Check step validates it matches one of those three ID schemes
+          (format only, no live existence check) and fails the run the same way SSM's own
+          validator would on a malformed value.
         required: false
         value: <+input>
       - name: target_role
