@@ -194,6 +194,43 @@ template:
                 spec:
                   connectorRef: <+stage.variables.k8s_connector>
                   namespace: default
+                  # Ships the mitigation container's stdout to Springer/ClickHouse.
+                  # Harness creates this pod, so the annotations cannot come from a
+                  # Helm chart -- they have to be set here or not at all.
+                  #
+                  # NOT YET VERIFIED: Harness documents annotations/labels on
+                  # KubernetesDirect for CI *build* infrastructure. That CD
+                  # stepGroupInfra accepts the same fields is inferred from it being
+                  # the same type, not confirmed. Validate against the pipeline schema
+                  # before relying on this; if Harness rejects or silently drops it,
+                  # the fallback is podSpecOverlay.
+                  annotations:
+                    io.opentelemetry.discovery.logs/enabled: "true"
+                    # start_at is the load-bearing part. The mitigation container
+                    # writes its output and exits in seconds, and filelog's default is
+                    # end -- upstream is explicit that "no logs will be read from a
+                    # file that is not actively being written to". Without beginning,
+                    # ZERO lines are captured, not merely the startup ones. The OTK
+                    # node-agent does not supply it: receiver_creator/logs'
+                    # default_file_log_config carries only retry_on_failure and
+                    # storage, because PLATOBS-8147's cluster-wide start_at: beginning
+                    # was added and then reverted over log-volume on pod restart.
+                    #
+                    # container-parser is repeated here on purpose. If a per-pod
+                    # /config merges over the node-agent default it is redundant and
+                    # harmless; if it replaces it, this is what keeps CRI log lines
+                    # parseable. Which of the two happens is not documented.
+                    io.opentelemetry.discovery.logs/config: |
+                      start_at: beginning
+                      operators:
+                        - type: container
+                          id: container-parser
+                    # One stable ServiceName for every generic mitigation on either
+                    # platform -- the invocation marker already carries ticket,
+                    # environment and target role. ClickHouse's query guard rejects
+                    # LIKE and requires ServiceName = or IN, so a single fixed value
+                    # keeps "show me every mitigation run" to one filter.
+                    resource.opentelemetry.io/service.name: generic-mitigation
     variables:
       - name: image
         type: String
