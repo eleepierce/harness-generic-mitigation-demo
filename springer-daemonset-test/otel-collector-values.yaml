@@ -18,7 +18,7 @@ presets:
   logsCollection:
     enabled: true
     includeCollectorLogs: false
-  # Adds the k8sattributes processor AND the ClusterRole/binding it needs to read
+  # Adds the k8s_attributes processor AND the ClusterRole/binding it needs to read
   # pods from the API server. Using the preset rather than hand-writing the
   # processor is what gets the RBAC right; the extract config below is merged
   # over whatever the preset sets.
@@ -35,20 +35,28 @@ config:
     # all, so CND log lines could not be filtered by cluster or account -- they
     # were findable only by pod name or body text, and indistinguishable from any
     # other un-attributed sender in a shared ClickHouse table.
-    k8sattributes:
+    k8s_attributes:
       extract:
-        metadata:
-          - k8s.namespace.name
-          - k8s.pod.name
-          - k8s.pod.uid
-          - k8s.deployment.name
-          - k8s.node.name
-          - k8s.container.name
+        # NOTE: deliberately no `metadata:` list here. Setting one REPLACES the
+        # preset's defaults rather than adding to them. An earlier revision of
+        # this file listed six fields and thereby dropped seventeen, including
+        # service.namespace, service.version, service.instance.id, the workload
+        # names (replicaset/daemonset/job/cronjob/statefulset), container.image.*,
+        # k8s.cluster.uid -- and, worst, `service.name` itself, which the preset
+        # derives from k8s semconv. That would have left every pod WITHOUT the
+        # annotation below reporting unknown_service: the exact bug this file
+        # exists to fix, reintroduced for un-annotated pods. Verified against
+        # `helm template` output for chart 0.165.0 before changing it.
         annotations:
           # Deliberately the SAME annotation OTK's node-agent keys off, so a pod
           # names its service identically on both platforms and one query shape
-          # works across them. Without this, CND has no way to set service.name
-          # at all -- OTK gets it from the platform collector, CND self-hosts.
+          # works across them.
+          #
+          # Belt and braces: the preset also sets `otel_annotations: true`, which
+          # makes k8s_attributes honour `resource.opentelemetry.io/*` natively, so
+          # this block is probably redundant. It is kept because it states the
+          # cross-platform contract explicitly -- if a future chart bump flips
+          # that default off, parity should not break silently.
           - key: resource.opentelemetry.io/service.name
             tag_name: service.name
             from: pod
@@ -77,7 +85,7 @@ config:
         # Listed in full because an explicit list REPLACES the chart's merged
         # default rather than appending to it -- omitting memory_limiter/batch
         # here would silently drop them.
-        processors: [memory_limiter, k8sattributes, resourcedetection/aws, resource/cluster, batch]
+        processors: [memory_limiter, k8s_attributes, resourcedetection/aws, resource/cluster, batch]
         exporters: [debug, otlp/springer]
 
 resources:
