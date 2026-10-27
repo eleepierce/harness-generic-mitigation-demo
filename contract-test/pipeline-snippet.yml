@@ -1,0 +1,54 @@
+# Minimal .buildkite/pipeline.yml for the POC repo (PLATSRE-1296): where the contract test slots in.
+# NOT installed anywhere: the repo has no .buildkite/ today; copy this there when wiring CI.
+#
+#   build image  ->  CONTRACT TEST (ECS Fargate, sandbox)  ->  sign image
+#
+# The sign step depends on the contract step, so a build that fails its contract is never signed.
+# The build/sign commands below are placeholders for whatever the repo uses today (the POC builds
+# and pushes by hand and signs with a cosign KMS key); the contract step is the real part.
+#
+# Image tag convention: every image is pushed as <repo>:<TAG>; TAG defaults to the short commit.
+# The test resolves the tag to a digest and runs the digest, as the launcher does.
+
+env:
+  TAG: "${BUILDKITE_COMMIT:0:8}"
+
+steps:
+  - label: ":docker: Build + push mitigation images"
+    key: build
+    command: |
+      echo "placeholder: build container-redis-check, container-zk-check, container-es-check,"
+      echo "container (connectivity-check) and container-pod-access; push as harness-poc/<name>:$${TAG}"
+
+  - label: ":test_tube: Contract test (Fargate, sandbox 547641909728)"
+    key: contract-test
+    depends_on: build
+    timeout_in_minutes: 15
+    # Needs aws CLI + jq on the agent. The role is an OIDC role in the SANDBOX account, separate from
+    # the cosign role (the identity that can sign must not be able to run tasks). It does not exist
+    # yet; the permissions it needs are:
+    #   ecs:RegisterTaskDefinition/RunTask/DescribeTasks/DeregisterTaskDefinition (cluster harness-poc-mitigation,
+    #   family harness-poc-contract-*), iam:PassRole on harness-poc-mitigation-exec + the empty
+    #   harness-poc-mitigation-<name> roles, iam:ListAttachedRolePolicies/ListRolePolicies on those roles,
+    #   ecr:DescribeImages, logs:GetLogEvents on /ecs/harness-poc-mitigation/*.
+    plugins:
+      - aws-assume-role-with-web-identity#v1.4.0:
+          role-arn: arn:aws:iam::547641909728:role/REPLACE-ME-contract-test-ci
+    env:
+      AWS_REGION: us-east-1
+      TAG: "${BUILDKITE_COMMIT:0:8}"
+    command: |
+      contract-test/contract-test.sh \
+        redis-check:$${TAG} zk-check:$${TAG} es-check:$${TAG} \
+        connectivity-check:$${TAG} pod-access-check:$${TAG}
+    # A non-zero exit fails the step and, because sign depends on it, blocks signing.
+    # The SQL and pod-access assertions need contract-test/fixtures.sh up (a MariaDB task plus a
+    # ServiceAccount on the harness-poc cluster) and fixtures.sh down afterwards; the CI role would
+    # need ECS run-task and kubectl apply on that cluster for that. Without the fixtures those
+    # assertions print SKIP and the step still passes; add STRICT=1 once the fixtures run in CI.
+
+  - label: ":lock: Sign images"
+    key: sign
+    depends_on: contract-test   # the gate: not signed unless the contract test passed
+    command: |
+      echo "placeholder: cosign sign --key awskms:///... harness-poc/<name>@<digest> for each image"

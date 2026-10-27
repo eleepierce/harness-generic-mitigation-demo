@@ -1,11 +1,15 @@
 pipeline:
   name: ecs-launcher-proto
   identifier: ecslauncherproto
-  projectIdentifier: reliability_engineering
+  projectIdentifier: reliability_engineering_domain
   orgIdentifier: cloudnativeplatform
-  tags: {}
+  tags:
+    owner: eleepierce
+    ticket: PLATSRE-1296
+    restored_from: reliability_engineering
   description: >-
-    Self-contained replacement for DO's org.run_ecs_container_stepgroup. Launches a short-lived
+    Verifies the image's cosign signature (fail closed) and launches the verified digest. Parameterised: one pipeline launches any harness-poc mitigation by name, each under its own
+    narrow task role (PLATSRE-1296). Self-contained replacement for DO's org.run_ecs_container_stepgroup. Launches a short-lived
     ECS Fargate mitigation task from a Kubernetes container Run step using only the AWS CLI, so it
     does not depend on /opt/harness-delegate/client-tools/harness-lib.sh (absent on a
     self-installed delegate). Also uses a STABLE CloudWatch log group that is never deleted, so
@@ -30,6 +34,82 @@ pipeline:
                   steps:
                     - step:
                         type: Run
+                        name: Verify Image Signature
+                        identifier: Verify_Image_Signature
+                        timeout: 2m
+                        # Fail closed: if this step fails the launch step never runs and no ECS task is created.
+                        # Read-only, so safe to retry on transient errors (same policy as the K8s template).
+                        failureStrategies:
+                          - onFailure:
+                              errors:
+                                - Unknown
+                                - Connectivity
+                                - Timeout
+                              action:
+                                type: Retry
+                                spec:
+                                  retryCount: 3
+                                  retryIntervals:
+                                    - 30s
+                                    - 1m
+                                    - 2m
+                                  onRetryFailure:
+                                    action:
+                                      type: MarkAsFailure
+                        spec:
+                          connectorRef: otkEcrBroker
+                          image: github.com/twilio-internal/generic-mitigation-scripts/admin-verifier:1.4.2
+                          shell: Sh
+                          command: |-
+                            set -euo pipefail
+                            MITIGATION_NAME='<+pipeline.variables.mitigation_name>'
+                            IMAGE_TAG='<+pipeline.variables.image_tag>'
+                            TRUST_ANCHOR='<+pipeline.variables.trust_anchor>'
+                            case "$MITIGATION_NAME" in
+                              ''|*[!a-z0-9-]*|-*) echo "FATAL: invalid mitigation_name '$MITIGATION_NAME'"; exit 1;;
+                            esac
+                            IMAGE="547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/$MITIGATION_NAME:$IMAGE_TAG"
+                            echo "Verifying image signature: $IMAGE"
+
+                            # cosign uses its own keychain, so register the ECR credential helper for this
+                            # registry host (it takes the pod's node-role credentials), as the K8s template does.
+                            REGISTRY_HOST=$(echo "$IMAGE" | cut -d/ -f1)
+                            export DOCKER_CONFIG=/tmp/.docker
+                            mkdir -p "$DOCKER_CONFIG"
+                            printf '{"credHelpers":{"%s":"ecr-login"}}' "$REGISTRY_HOST" > "$DOCKER_CONFIG/config.json"
+
+                            # Trust anchor. production = the KMS public key baked into the verifier image (the real
+                            # trust anchor). sandbox = the public half of this account's own KMS key
+                            # alias/harness-poc-cosign, because sandbox images are not signed by the production key.
+                            case "$TRUST_ANCHOR" in
+                              production) KEYFILE=/usr/local/share/cosign-public.key;;
+                              sandbox)
+                                KEYFILE=/tmp/sandbox-cosign.pub
+                                cat > "$KEYFILE" <<'PUBKEY'
+                            -----BEGIN PUBLIC KEY-----
+                            MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuRXoJdUuaVjn3BGO29X+Sb79icjD
+                            2W41voxmQVt8qgPUPMLbK36dzGXt7/bZri6OvQpmuuiFpfhH1b4i3mugdQ==
+                            -----END PUBLIC KEY-----
+                            PUBKEY
+                                ;;
+                              *) echo "FATAL: trust_anchor must be production or sandbox (got '$TRUST_ANCHOR')"; exit 1;;
+                            esac
+                            echo "trust anchor: $TRUST_ANCHOR ($KEYFILE)"
+
+                            cosign verify --insecure-ignore-tlog --key "$KEYFILE" "$IMAGE" > /tmp/verify.json
+                            DIGEST=$(jq -r '.[0].critical.image."docker-manifest-digest"' /tmp/verify.json)
+                            case "$DIGEST" in
+                              sha256:????????????????????????????????????????????????????????????????) ;;
+                              *) echo "FATAL: signature verified but no manifest digest could be read from the cosign output"; exit 1;;
+                            esac
+                            echo "signature verified; digest=$DIGEST"
+                            IMAGE_DIGEST="$DIGEST"
+                          outputVariables:
+                            - name: IMAGE_DIGEST
+                              type: String
+                              value: IMAGE_DIGEST
+                    - step:
+                        type: Run
                         name: Launch ECS Mitigation Task
                         identifier: Launch_ECS_Mitigation_Task
                         timeout: 15m
@@ -51,10 +131,13 @@ pipeline:
 
                             REGION=us-east-1
                             CLUSTER=harness-poc-mitigation
-                            FAMILY=harness-poc-redis-check
+                            MITIGATION_NAME='<+pipeline.variables.mitigation_name>'
+                            IMAGE_TAG='<+pipeline.variables.image_tag>'
+                            ENV_JSON='<+pipeline.variables.env_json>'
+                            MITIGATION_TICKET='<+pipeline.variables.mitigation_ticket_id>'
+                            MITIGATION_ENV='<+pipeline.variables.mitigation_environment>'
+                            MITIGATION_ROLE_LABEL='<+pipeline.variables.mitigation_target_role>'
                             CONTAINER_NAME=mitigation
-                            IMAGE=547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/redis-check:v2.2.0
-                            ROLE_ARN=arn:aws:iam::547641909728:role/cnd-eleepierce-sandbox-harness-role
                             SUBNETS=subnet-0e03fe41c740515df,subnet-0a53a43b9278b1b7b
                             SECURITY_GROUP=sg-04ac82eeae54cd226
                             # STABLE log group, deliberately never deleted: /ecs/<cluster>/<service>
@@ -62,7 +145,6 @@ pipeline:
                             # CloudWatch -> Springer forwarding is actually possible. DO's version
                             # uses a per-run ephemeral group and deletes it, which makes that
                             # impossible.
-                            LOG_GROUP=/ecs/harness-poc-mitigation/redis-check
                             LOG_RETENTION_DAYS=1
                             STREAM_PREFIX=ecs
                             FAIL_MODE=<+pipeline.variables.fail_mode>
@@ -74,6 +156,30 @@ pipeline:
                             TASK_ARN=""
 
                             log() { echo "[ecs-launcher] $*"; }
+
+                            # ---------- derive everything from the mitigation name ----------
+                            # One name selects the ECR repo, the task family, the log group AND the task role, so a
+                            # caller cannot pair one mitigation's image with another's role. The role is never a free
+                            # input; the launcher's iam:PassRole is limited to role/harness-poc-mitigation-* so IAM
+                            # enforces the same boundary even if this check were bypassed.
+                            case "$MITIGATION_NAME" in
+                              ''|*[!a-z0-9-]*|-*) echo "[ecs-launcher] FATAL: mitigation_name must be lowercase letters, digits and hyphens, not starting with a hyphen (got: '$MITIGATION_NAME')"; exit 1;;
+                            esac
+                            FAMILY="harness-poc-$MITIGATION_NAME"
+                            # Launch the exact digest the Verify Image Signature step verified, not the tag, so the
+                            # image cannot change between verification and the ECS pull.
+                            IMAGE_DIGEST='<+execution.steps.ecslaunchergroup.steps.Verify_Image_Signature.output.outputVariables.IMAGE_DIGEST>'
+                            case "$IMAGE_DIGEST" in
+                              sha256:????????????????????????????????????????????????????????????????) ;;
+                              *) echo "[ecs-launcher] FATAL: no verified image digest from the verify step (got '$IMAGE_DIGEST')"; exit 1;;
+                            esac
+                            IMAGE="547641909728.dkr.ecr.us-east-1.amazonaws.com/harness-poc/$MITIGATION_NAME@$IMAGE_DIGEST"
+                            EXEC_ROLE_ARN=arn:aws:iam::547641909728:role/harness-poc-mitigation-exec
+                            TASK_ROLE_ARN="arn:aws:iam::547641909728:role/harness-poc-mitigation-$MITIGATION_NAME"
+                            LOG_GROUP="/ecs/harness-poc-mitigation/$MITIGATION_NAME"
+                            log "mitigation=$MITIGATION_NAME image=$IMAGE"
+                            log "execution role: $EXEC_ROLE_ARN"
+                            log "task role:      $TASK_ROLE_ARN"
 
                             cleanup() {
                               if [ -n "$TASK_DEF_ARN" ]; then
@@ -123,7 +229,6 @@ pipeline:
                             # Container contract: ENTRYPOINT is baked into the image
                             # (mitigation-entrypoint.sh -> redis-check.sh). Deliberately no
                             # entryPoint and no command override - config travels only as env vars.
-                            ENV_JSON='{"REDIS_HOST":"redis-target.default.svc.cluster.local","REDIS_PORT":"6379"}'
                             ENV_B64=$(printf '%s' "$ENV_JSON" | base64 | tr -d '\n')
                             log "MITIGATION_ENV_JSON_B64=$ENV_B64"
 
@@ -134,8 +239,8 @@ pipeline:
                               "requiresCompatibilities": ["FARGATE"],
                               "cpu": "512",
                               "memory": "1024",
-                              "executionRoleArn": "$ROLE_ARN",
-                              "taskRoleArn": "$ROLE_ARN",
+                              "executionRoleArn": "$EXEC_ROLE_ARN",
+                              "taskRoleArn": "$TASK_ROLE_ARN",
                               "containerDefinitions": [
                                 {
                                   "name": "$CONTAINER_NAME",
@@ -143,8 +248,9 @@ pipeline:
                                   "essential": true,
                                   "environment": [
                                     {"name": "MITIGATION_ENV_JSON_B64", "value": "$ENV_B64"},
-                                    {"name": "MITIGATION_TICKET_ID", "value": "PLATSRE-1796"},
-                                    {"name": "MITIGATION_ENVIRONMENT", "value": "prod"}
+                                    {"name": "MITIGATION_TICKET_ID", "value": "$MITIGATION_TICKET"},
+                                    {"name": "MITIGATION_ENVIRONMENT", "value": "$MITIGATION_ENV"},
+                                    {"name": "MITIGATION_TARGET_ROLE", "value": "$MITIGATION_ROLE_LABEL"}
                                   ],
                                   "logConfiguration": {
                                     "logDriver": "awslogs",
@@ -279,6 +385,47 @@ pipeline:
                             exit 1
         failureStrategies: []
   variables:
+    - name: mitigation_name
+      type: String
+      description: >-
+        Which mitigation to run: redis-check, zk-check or es-check. Selects the ECR repo
+        harness-poc/<name>, the task family, the log group and the task role
+        harness-poc-mitigation-<name>.
+      required: true
+      value: <+input>
+    - name: image_tag
+      type: String
+      description: Image tag within harness-poc/<mitigation_name>.
+      required: false
+      value: <+input>.default(v2.2.0)
+    - name: env_json
+      type: String
+      description: >-
+        JSON object of the mitigation's own env vars, e.g. {"REDIS_HOST":"10.0.0.1","REDIS_PORT":"6379"}.
+        No single quotes. Fargate cannot resolve cluster-local service names; use an IP or DNS name
+        reachable from the workload VPC.
+      required: true
+      value: <+input>
+    - name: mitigation_ticket_id
+      type: String
+      required: false
+      value: <+input>.default(PLATSRE-1796)
+    - name: mitigation_environment
+      type: String
+      required: false
+      value: <+input>.default(prod)
+    - name: mitigation_target_role
+      type: String
+      required: false
+      value: <+input>.default(crontroller-tx)
+    - name: trust_anchor
+      type: String
+      description: >-
+        Which cosign public key the Verify Image Signature step trusts. sandbox = this account's own KMS key
+        alias/harness-poc-cosign (the only key that signs the harness-poc images). production = the KMS key
+        baked into the admin-verifier image, which is what a real deployment would use.
+      required: false
+      value: <+input>.default(sandbox)
     - name: fail_mode
       type: String
       description: >-
